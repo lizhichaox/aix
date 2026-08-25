@@ -1,0 +1,32 @@
+# Binary
+aix
+*.exe
+*.dll
+*.so
+*.dylib
+
+# macOS
+.DS_Store
+
+# Runtime data (prevent accidental check-in of real configs)
+*.log
+*.pid
+proxy.toml
+.state.toml
+.env
+.env.*
+
+# Session data
+*.jsonl
+*.name
+
+# Go test
+*.test
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
