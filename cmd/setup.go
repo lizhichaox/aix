@@ -14,7 +14,7 @@ var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Initialize AIX from configured credentials",
 	Long: `Initialize AIX from provider credentials already present in the
-environment or AIX configuration, then install the private Claude gateway
+environment or AIX configuration, then install the private AIX gateway
 service when possible. Missing credentials are reported without prompting.`,
 	Args: cobra.NoArgs,
 	RunE: runSetup,
@@ -45,6 +45,9 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		if err := internal.EnsureClaudeProxyProvider(providerID); err != nil {
 			return fmt.Errorf("configure %s: %w", preset.Name, err)
 		}
+		if _, _, err := internal.EnsureCodexProxyProvider(providerID, key); err != nil {
+			return fmt.Errorf("configure %s Responses route: %w", preset.Name, err)
+		}
 		fmt.Printf("✓ %-14s credential saved (%s)\n", providerID, source)
 		configured++
 	}
@@ -55,10 +58,10 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		fmt.Println("  AIX was initialized, but provider switching will remain unavailable.")
 	} else {
 		if _, err := internal.InstallService(); err != nil {
-			fmt.Printf("\n⚠ Claude gateway service install failed: %v\n", err)
-			fmt.Println("  A Claude provider switch will start it on demand.")
+			fmt.Printf("\n⚠ AIX gateway service install failed: %v\n", err)
+			fmt.Println("  A managed provider switch will start it on demand.")
 		} else {
-			fmt.Println("\n✓ Claude gateway ready")
+			fmt.Println("\n✓ AIX gateway ready")
 		}
 	}
 

@@ -1,7 +1,32 @@
 # Changelog
 
+## v0.11.1 (2026-08-25)
+
+- Preserved Codex conversation-history lineage: paginated rollouts are kept
+  byte-for-byte and reasoning/session contents are no longer rewritten on
+  provider switch or restore, resolving the "cutoff byte offset past the
+  source rollout" resume error.
+- Pinned Codex Responses reasoning effort to the configured value and unified
+  status mode reporting to `gateway`, so `aix status` reflects what requests
+  actually use.
+- Stopped logging no-op model rewrites; the gateway now logs only real
+  model-to-upstream mappings.
+- Made gateway readiness trust the `/health` endpoint when the PID file is
+  stale or unreadable, removing a false "AIX gateway is not running" warning
+  in managed status output.
+- Expanded `aix log` with route rendering, provider filtering, line limits,
+  and follow mode, and added provider administration helpers for gateway-key
+  migration and write-safe proxy config loading.
+
 ## v0.11.0 (2026-08-25)
 
+- Routed managed Codex providers through the private AIX gateway using native
+  Responses passthrough, isolated provider routes, gateway authentication,
+  model rewriting, SSE streaming, and route-aware request logs. Restoring
+  Codex continues to use its OpenAI-native direct connection.
+- Added active model and context length to status output, made gateway logs
+  show the harness/provider/model/effort relationship, and fixed Claude
+  Desktop to prefer provider models that advertise one-million-token context.
 - Added cross-platform CI, security and contribution policies, issue and pull
   request templates, automated dependency updates, CodeQL analysis,
   third-party provenance notices, Apache-2.0 licensing, automated release

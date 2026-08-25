@@ -244,7 +244,7 @@ func switchClaudeProvider(provider, model, effort string) error {
 			return fmt.Errorf("save %s state: %w", id, err)
 		}
 	}
-	if err := ensureClaudeGateway(); err != nil {
+	if err := ensureAIXGateway(); err != nil {
 		return err
 	}
 	fmt.Printf("✓ Claude Code + Claude Desktop → %s", provider)

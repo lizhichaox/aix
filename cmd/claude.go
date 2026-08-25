@@ -56,7 +56,7 @@ var claudeRestartCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if activeClaudeProvider("desktop") != "" {
-			if err := ensureClaudeGateway(); err != nil {
+			if err := ensureAIXGateway(); err != nil {
 				return err
 			}
 		}

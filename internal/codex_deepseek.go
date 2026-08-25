@@ -52,9 +52,9 @@ type NativeModelSpec struct {
 	ContextWindow int
 }
 
-// NativeProviderSpec describes a provider Codex can call directly through its
-// native Responses API without the AIX proxy. Adding a new native provider is
-// a single registry entry plus an optional catalog metadata factory.
+// NativeProviderSpec describes a provider that exposes a native Responses API
+// for passthrough through the AIX gateway. Adding one is a single registry
+// entry plus an optional catalog metadata factory.
 type NativeProviderSpec struct {
 	ID              string
 	Name            string
@@ -332,6 +332,11 @@ func NativeProviderAPIKey(providerID string) (string, string) {
 		}
 	}
 	if cfg, err := LoadProxyConfig(); err == nil {
+		if provider := cfg.Providers[CodexProxyProviderID(providerID)]; provider != nil {
+			if key := strings.TrimSpace(provider.AuthToken); key != "" {
+				return key, "AIX provider configuration"
+			}
+		}
 		if provider := cfg.Providers[providerID]; provider != nil {
 			if key := strings.TrimSpace(provider.AuthToken); key != "" {
 				return key, "AIX provider configuration"
@@ -488,6 +493,7 @@ type CodexDeepSeekOptions struct {
 type CodexNativeOptions struct {
 	ProviderID       string
 	APIKey           string
+	BaseURL          string
 	Model            string
 	Effort           string
 	ConfigPath       string
@@ -508,6 +514,25 @@ func ConfigureCodexNativeWithEffort(providerID, model, effort, apiKey string) er
 	return ConfigureCodexNativeAt(CodexNativeOptions{
 		ProviderID:       providerID,
 		APIKey:           apiKey,
+		Model:            model,
+		Effort:           effort,
+		ConfigPath:       CodexConfigPath(),
+		ModelCatalogPath: CodexModelsPath(),
+		BackupDir:        BackupsDir(),
+	})
+}
+
+// ConfigureCodexProxyWithEffort configures Codex to use the local AIX gateway
+// while retaining the provider's native Responses protocol end to end.
+func ConfigureCodexProxyWithEffort(providerID, model, effort, upstreamKey string) error {
+	baseURL, gatewayKey, err := EnsureCodexProxyProvider(providerID, upstreamKey)
+	if err != nil {
+		return err
+	}
+	return ConfigureCodexNativeAt(CodexNativeOptions{
+		ProviderID:       providerID,
+		APIKey:           gatewayKey,
+		BaseURL:          baseURL,
 		Model:            model,
 		Effort:           effort,
 		ConfigPath:       CodexConfigPath(),
@@ -552,9 +577,13 @@ func ConfigureCodexNativeAt(opts CodexNativeOptions) error {
 	if providers == nil {
 		providers = make(map[string]interface{})
 	}
+	baseURL := harness.BaseURL
+	if strings.TrimSpace(opts.BaseURL) != "" {
+		baseURL = strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/")
+	}
 	providers[opts.ProviderID] = map[string]interface{}{
 		"name":                      spec.Name,
-		"base_url":                  harness.BaseURL,
+		"base_url":                  baseURL,
 		"wire_api":                  "responses",
 		"experimental_bearer_token": strings.TrimSpace(opts.APIKey),
 	}

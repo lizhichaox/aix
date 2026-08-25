@@ -7,8 +7,8 @@ import (
 
 var codexCmd = &cobra.Command{
 	Use:   "codex [provider] [model] [effort]",
-	Short: "Switch Codex native providers",
-	Long: `Switch Codex directly to a native Responses API provider.
+	Short: "Switch Codex Responses providers",
+	Long: `Switch Codex to a Responses API provider through the private AIX gateway.
 
   aix codex                              list providers
   aix codex <provider>                   use the provider defaults
@@ -31,6 +31,13 @@ var codexRestartCmd = &cobra.Command{
 	Short: "Restart the Codex desktop app",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if app, err := internal.ResolveHarness("codex"); err == nil {
+			if mode, _, _ := app.StatusMode(); mode == "proxy" {
+				if err := ensureAIXGateway(); err != nil {
+					return err
+				}
+			}
+		}
 		return restartMacApp(internal.CodexHostAppName())
 	},
 }

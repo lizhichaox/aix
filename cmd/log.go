@@ -12,8 +12,8 @@ import (
 
 var logCmd = &cobra.Command{
 	Use:   "log",
-	Short: "View the Claude gateway log",
-	Long:  "View the Claude gateway log. Follows output by default; use --no-follow to print and exit.",
+	Short: "View AIX routing and gateway logs",
+	Long:  "Show the active harness/provider/model/effort routes, then view the private AIX gateway log. Follows output by default; use --no-follow to print and exit.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logPath := internal.ProxyLogPath()
 		lines, _ := cmd.Flags().GetInt("lines")
@@ -21,8 +21,12 @@ var logCmd = &cobra.Command{
 		provider, _ := cmd.Flags().GetString("provider")
 
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
-			return fmt.Errorf("Claude gateway log not found at %s\n  Switch a Claude provider to start it", logPath)
+			return fmt.Errorf("AIX gateway log not found at %s\n  Switch a managed provider to start it", logPath)
 		}
+
+		state, _ := internal.LoadState()
+		fmt.Fprintln(os.Stdout, formatLogRoutes(buildHarnessStatuses(state)))
+		fmt.Fprintf(os.Stdout, "Gateway log: %s\n\n", logPath)
 
 		tailArgs := []string{}
 		if lines > 0 {
@@ -54,6 +58,36 @@ var logCmd = &cobra.Command{
 		tailCmd.Stdout = os.Stdout
 		return tailCmd.Run()
 	},
+}
+
+func formatLogRoute(status harnessStatus) string {
+	harness := status.ID
+	if harness == "" {
+		harness = "unknown"
+	}
+	provider := status.Provider
+	if provider == "" || provider == "-" {
+		provider = "unknown"
+	}
+	model := status.Model
+	if model == "" {
+		model = "unknown"
+	}
+	effort := status.Effort
+	if effort == "" {
+		effort = "unknown"
+	}
+	return fmt.Sprintf("Current route: harness=%s → provider=%s → model=%s → effort=%s", harness, provider, model, effort)
+}
+
+func formatLogRoutes(statuses []harnessStatus) string {
+	var b strings.Builder
+	b.WriteString("Current routes:")
+	for _, status := range statuses {
+		b.WriteString("\n  ")
+		b.WriteString(strings.TrimPrefix(formatLogRoute(status), "Current route: "))
+	}
+	return b.String()
 }
 
 func init() {

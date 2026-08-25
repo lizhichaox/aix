@@ -1,7 +1,6 @@
 package internal
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -72,7 +71,7 @@ func TestSyncCodexHistory(t *testing.T) {
 	}
 }
 
-func TestSyncCodexHistoryNormalizesReasoningItems(t *testing.T) {
+func TestSyncCodexHistoryPreservesConversationItems(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	const reasoning = `{"timestamp":"2026-08-06T02:00:00Z","type":"session_meta","payload":{"session_id":"root-1","id":"root-1","model_provider":"deepseek","cwd":"/proj/aix"}}` + "\n" +
@@ -94,56 +93,47 @@ func TestSyncCodexHistoryNormalizesReasoningItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-	var gotReasoning, gotMessage map[string]interface{}
-	for _, ln := range lines {
-		var raw map[string]interface{}
-		if err := json.Unmarshal([]byte(ln), &raw); err != nil {
-			t.Fatalf("unmarshal line: %v", err)
-		}
-		if raw["type"] != "response_item" {
-			continue
-		}
-		payload := raw["payload"].(map[string]interface{})
-		switch payload["type"] {
-		case "reasoning":
-			gotReasoning = payload
-		case "message":
-			gotMessage = payload
-		}
-	}
-
 	// The provider is retagged.
 	meta, ok, err := readSessionMetaFirstLine(p)
 	if err != nil || !ok || meta.Payload.ModelProvider != "openai" {
 		t.Fatalf("provider not retagged: %+v ok=%v err=%v", meta, ok, err)
 	}
-	// Reasoning content is emptied (Responses API max-0 constraint) and the
-	// plaintext thinking is preserved as a summary.
-	if content, _ := gotReasoning["content"].([]interface{}); len(content) != 0 {
-		t.Errorf("reasoning content should be empty, got %v", gotReasoning["content"])
+	originalItems := strings.SplitN(reasoning, "\n", 2)[1]
+	gotItems := strings.SplitN(string(content), "\n", 2)[1]
+	if gotItems != originalItems {
+		t.Errorf("conversation items changed during provider retag")
 	}
-	summary, _ := gotReasoning["summary"].([]interface{})
-	if len(summary) != 1 {
-		t.Fatalf("reasoning summary should be populated, got %v", gotReasoning["summary"])
+}
+
+func TestSyncCodexHistoryLeavesPaginatedLineageByteExact(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := filepath.Join(CodexSessionsDir(), "2026", "08", "25")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
 	}
-	if first := summary[0].(map[string]interface{}); first["type"] != "summary_text" || first["text"] != "hidden thinking" {
-		t.Errorf("reasoning summary part = %v, want summary_text(hidden thinking)", first)
+	root := `{"timestamp":"2026-08-25T10:00:00Z","type":"session_meta","payload":{"session_id":"thread-1","id":"thread-1","model_provider":"openai"}}` + "\n" +
+		`{"timestamp":"2026-08-25T10:01:00Z","type":"event_msg","payload":{"type":"task_complete"}}` + "\n"
+	child := `{"timestamp":"2026-08-25T10:02:00Z","type":"session_meta","payload":{"session_id":"thread-1","id":"thread-1","model_provider":"openai","history_base":{"thread_id":"thread-1","end_byte_offset":200,"end_ordinal_exclusive":2}}}` + "\n"
+	rootPath := filepath.Join(dir, "rollout-thread-1.jsonl")
+	childPath := filepath.Join(dir, "rollout-thread-1-page-2.jsonl")
+	if err := os.WriteFile(rootPath, []byte(root), 0600); err != nil {
+		t.Fatal(err)
 	}
-	// Provider-specific encrypted_content is dropped for portability.
-	if _, ok := gotReasoning["encrypted_content"]; ok {
-		t.Error("reasoning encrypted_content should be dropped")
+	if err := os.WriteFile(childPath, []byte(child), 0600); err != nil {
+		t.Fatal(err)
 	}
-	// Message items are untouched.
-	if gotMessage == nil {
-		t.Fatal("message item missing")
+
+	if _, err := SyncCodexHistory("opencode-go"); err != nil {
+		t.Fatalf("SyncCodexHistory: %v", err)
 	}
-	if content, _ := gotMessage["content"].([]interface{}); len(content) != 1 {
-		t.Errorf("message content should be untouched, got %v", gotMessage["content"])
-	}
-	// Top-level rollout fields survive the rewrite.
-	if _, ok := gotReasoning["id"]; !ok {
-		t.Error("reasoning id was dropped")
+	for path, want := range map[string]string{rootPath: root, childPath: child} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("paginated rollout changed: %s", path)
+		}
 	}
 }
 

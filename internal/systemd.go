@@ -13,7 +13,7 @@ import (
 const systemdUnitName = "aix-proxy"
 
 var systemdTmpl = template.Must(template.New("unit").Parse(`[Unit]
-Description=AIX Claude gateway
+Description=AIX private gateway
 After=network-online.target
 Wants=network-online.target
 
@@ -74,7 +74,7 @@ func InstallSystemd() (string, error) {
 
 func RestartSystemd() error {
 	if !IsSystemdInstalled() {
-		return fmt.Errorf("Claude gateway service is not installed; run aix setup")
+		return fmt.Errorf("AIX gateway service is not installed; run aix setup")
 	}
 	exec.Command("systemctl", "--user", "daemon-reload").Run()
 	out, err := exec.Command("systemctl", "--user", "restart", systemdUnitName).CombinedOutput()

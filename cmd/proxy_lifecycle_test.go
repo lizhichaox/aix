@@ -62,5 +62,5 @@ func TestInternalProxyStartsWithoutPublicCommand(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("internal Claude gateway did not answer at %s", url)
+	t.Fatalf("internal AIX gateway did not answer at %s", url)
 }

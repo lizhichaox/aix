@@ -73,8 +73,8 @@ func TestCodexProviderOverview(t *testing.T) {
 			t.Errorf("overview missing %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "Codex supports these native providers") {
-		t.Errorf("overview missing native section:\n%s", out)
+	if !strings.Contains(out, "Responses providers through the private AIX gateway") {
+		t.Errorf("overview missing managed Responses section:\n%s", out)
 	}
 }
 
@@ -101,9 +101,9 @@ func TestCodexBareCommandListsProviders(t *testing.T) {
 			t.Fatalf("execute: %v", err)
 		}
 	})
-	if !strings.Contains(out, "Codex supports these native providers") ||
+	if !strings.Contains(out, "Responses providers through the private AIX gateway") ||
 		!strings.Contains(out, "opencode-zen") ||
-		strings.Contains(out, "Via AIX proxy") {
+		strings.Contains(out, "direct Responses API") {
 		t.Errorf("bare codex should list providers:\n%s", out)
 	}
 }
@@ -141,7 +141,7 @@ func TestCodexProviderCommandUnknownProvider(t *testing.T) {
 	clearNativeProviderKeys(t)
 	rootCmd.SetArgs([]string{"codex", "nope"})
 	err := rootCmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "unknown Codex native provider") {
+	if err == nil || !strings.Contains(err.Error(), "unknown Codex Responses provider") {
 		t.Fatalf("expected unknown-provider error, got %v", err)
 	}
 }

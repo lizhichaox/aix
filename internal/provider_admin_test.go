@@ -268,3 +268,57 @@ func TestEnsureClaudeProxyProviderRequiresKey(t *testing.T) {
 		t.Fatal("expected an error when no API key is available")
 	}
 }
+
+func TestEnsureCodexProxyProviderCreatesIsolatedResponsesRoute(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	baseURL, gatewayKey, err := EnsureCodexProxyProvider("opencode-go", "sk-go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseURL != "http://127.0.0.1:2026/codex-opencode-go/v1" {
+		t.Errorf("base URL = %q", baseURL)
+	}
+	if gatewayKey != DefaultGatewayAPIKey {
+		t.Errorf("gateway key = %q", gatewayKey)
+	}
+	cfg, err := LoadProxyConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Providers[CodexProxyProviderID("opencode-go")]
+	if p == nil {
+		t.Fatal("Codex provider route is missing")
+	}
+	if p.Upstream != "https://opencode.ai/zen/go" || p.AuthToken != "sk-go" {
+		t.Errorf("Codex provider route = %#v", p)
+	}
+	if p.AnthropicNative {
+		t.Error("Codex Responses route must not be marked Anthropic-native")
+	}
+
+	// Claude and Codex routes remain independent even when they share a key.
+	t.Setenv("OPENCODE_GO_API_KEY", "sk-go")
+	if err := EnsureClaudeProxyProvider("opencode-go"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ = LoadProxyConfig()
+	if cfg.Providers["opencode-go"] == nil || cfg.Providers["codex-opencode-go"] == nil {
+		t.Fatalf("isolated routes = %#v", cfg.Providers)
+	}
+}
+
+func TestCodexProxyUpstreamTrimsOnlyTerminalV1(t *testing.T) {
+	cases := map[string]string{
+		"https://api.deepseek.com/":    "https://api.deepseek.com",
+		"https://openrouter.ai/api/v1": "https://openrouter.ai/api",
+		"https://example.com/v10":      "https://example.com/v10",
+	}
+	for input, want := range cases {
+		if got := codexProxyUpstream(input); got != want {
+			t.Errorf("codexProxyUpstream(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

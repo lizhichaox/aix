@@ -41,7 +41,7 @@ type modelsResponse struct {
 
 var ProxyVersion = "dev"
 
-// ProxyServiceEnv starts the internal Claude gateway without exposing a
+// ProxyServiceEnv starts the internal AIX gateway without exposing a
 // user-facing proxy command. Service managers and the on-demand launcher set
 // this variable before executing aix.
 const ProxyServiceEnv = "AIX_INTERNAL_PROXY"
@@ -123,6 +123,22 @@ func IsProxyRunning() (bool, int) {
 		return false, 0
 	}
 	return true, pid
+}
+
+// IsGatewayReady reports whether the AIX gateway process can serve requests.
+// It trusts the health endpoint rather than only the PID file, which can be
+// stale or temporarily unreadable; a healthy listener is the authoritative
+// signal that managed harnesses can be served.
+func IsGatewayReady() bool {
+	if running, _ := IsProxyRunning(); running {
+		return true
+	}
+	cfg, err := LoadProxyConfig()
+	if err != nil {
+		return false
+	}
+	health, err := FetchProxyHealth(cfg.Listen)
+	return err == nil && health != nil && health.Status == "ok"
 }
 
 func MaskHeader(v string) string {
@@ -238,11 +254,31 @@ func isClaudeCodeRequest(r *http.Request) bool {
 }
 
 // isResponsesPath reports whether the request targets the OpenAI Responses
-// API. AIX does not proxy the Responses API: Codex uses native providers
-// (aix codex <provider>), which call the provider directly and bypass the
-// proxy entirely.
+// API. AIX passes this protocol through unchanged for Codex routes.
 func isResponsesPath(path string) bool {
-	return strings.HasSuffix(path, "/v1/responses") || path == "/responses"
+	for _, marker := range []string{"/v1/responses", "/responses"} {
+		if idx := strings.Index(path, marker); idx >= 0 {
+			rest := path[idx+len(marker):]
+			if rest == "" || strings.HasPrefix(rest, "/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// requestHarness identifies a public harness only when the request protocol
+// makes the relationship unambiguous. Claude Code and Claude Desktop are one
+// public Claude harness and both use the Anthropic Messages paths. Responses
+// paths belong to the public Codex harness.
+func requestHarness(path string) string {
+	if strings.Contains(path, "/v1/messages") {
+		return HarnessClaude
+	}
+	if isResponsesPath(path) {
+		return HarnessCodex
+	}
+	return "unknown"
 }
 
 func isLocalAddr(addr string) bool {
@@ -254,8 +290,8 @@ func isLocalAddr(addr string) bool {
 }
 
 func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[aix-proxy] incoming: %s %s | x-api-key=%s Authorization=%s ua=%s",
-		r.Method, r.URL.Path,
+	log.Printf("[aix-proxy] incoming: harness=%s method=%s path=%s | x-api-key=%s Authorization=%s ua=%s",
+		requestHarness(r.URL.Path), r.Method, r.URL.Path,
 		MaskHeader(r.Header.Get("x-api-key")),
 		MaskHeader(r.Header.Get("Authorization")),
 		r.UserAgent())
@@ -342,9 +378,13 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	if isResponsesPath(r.URL.Path) {
-		// The Responses API is never proxied: Codex uses native providers
-		// directly (aix codex <provider>), which bypass the proxy entirely.
-		http.Error(w, `{"error":"Responses API is not proxied — Codex must use a native provider (aix codex <provider>)"}`, http.StatusNotImplemented)
+		if explicitProvider == nil || !strings.HasPrefix(providerName, "codex-") {
+			http.Error(w, `{"error":"Responses requests require an explicit codex-<provider> AIX route"}`, http.StatusBadRequest)
+			return
+		}
+	}
+	if strings.Contains(r.URL.Path, "/v1/messages") && explicitProvider != nil && !providerIsAnthropic(explicitProvider) {
+		http.Error(w, `{"error":"Messages requests require an Anthropic-compatible AIX provider route"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -364,6 +404,25 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Rewrite model in the pre-read body bytes.
 	bodyBytes = ps.rewriteModel(bodyBytes, provider)
+	// Pin the reasoning effort to the configured value for Codex Responses
+	// routes. The desktop client sends its own per-request effort (commonly
+	// defaulting to medium), which can drift from the configured
+	// model_reasoning_effort and the catalog's declared default. Normalizing it
+	// keeps `aix status` and actual request usage consistent.
+	if requestHarness(r.URL.Path) == HarnessCodex {
+		if effort := CurrentHarnessEffort(HarnessCodex); effort != "" {
+			bodyBytes = setReasoningEffort(bodyBytes, effort)
+		}
+	}
+	routedModel := extractModelFromBytes(bodyBytes)
+	routedEffort := extractEffortFromBytes(bodyBytes)
+	publicProvider := publicProxyProviderID(providerName)
+	if publicProvider == "" {
+		publicProvider = provider.Name
+	}
+	harness := requestHarness(r.URL.Path)
+	log.Printf("[aix-proxy] route: harness=%s provider=%s model=%s effort=%s method=%s path=%s",
+		harness, logValue(publicProvider), logValue(routedModel), logValue(routedEffort), r.Method, r.URL.Path)
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
@@ -391,7 +450,8 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[aix-proxy] upstream status: %d", resp.StatusCode)
+	log.Printf("[aix-proxy] response: harness=%s provider=%s model=%s effort=%s status=%d",
+		harness, logValue(publicProvider), logValue(routedModel), logValue(routedEffort), resp.StatusCode)
 
 	for k, vs := range resp.Header {
 		for _, v := range vs {
@@ -566,6 +626,62 @@ func extractModelFromBytes(data []byte) string {
 	return ""
 }
 
+func extractEffortFromBytes(data []byte) string {
+	var req struct {
+		Reasoning struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+	}
+	if json.Unmarshal(data, &req) == nil {
+		return req.Reasoning.Effort
+	}
+	return ""
+}
+
+// setReasoningEffort pins the Responses reasoning effort to a fixed value.
+// The Codex desktop sends its own per-request effort, which can drift from the
+// configured model_reasoning_effort and the catalog's declared
+// default_reasoning_level; normalizing keeps status and actual usage
+// consistent. An empty effort leaves the body untouched.
+func setReasoningEffort(body []byte, effort string) []byte {
+	if effort == "" || len(body) == 0 {
+		return body
+	}
+	var data map[string]json.RawMessage
+	if err := json.Unmarshal(body, &data); err != nil {
+		return body
+	}
+	var reasoning map[string]json.RawMessage
+	if raw, ok := data["reasoning"]; ok {
+		_ = json.Unmarshal(raw, &reasoning)
+	}
+	if reasoning == nil {
+		reasoning = make(map[string]json.RawMessage)
+	}
+	reasoning["effort"], _ = json.Marshal(effort)
+	data["reasoning"], _ = json.Marshal(reasoning)
+	rewritten, err := json.Marshal(data)
+	if err != nil {
+		return body
+	}
+	return rewritten
+}
+
+func publicProxyProviderID(providerID string) string {
+	providerID = strings.TrimPrefix(providerID, "codex-")
+	if providerID == DeepSeekAnthropicProviderID {
+		return "deepseek"
+	}
+	return providerID
+}
+
+func logValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "unknown"
+	}
+	return value
+}
+
 // extractModelFromBody reads and restores request body, returning the model field value.
 func extractModelFromBody(r *http.Request) string {
 	if r.Body == nil {
@@ -619,16 +735,23 @@ func (ps *ProxyServer) rewriteModel(body []byte, provider *ProviderConfig) []byt
 	if raw, ok := data["model"]; ok {
 		var model string
 		if json.Unmarshal(raw, &model) == nil {
-			if mapped, ok := provider.Models[model]; ok {
-				data["model"], _ = json.Marshal(mapped)
-				log.Printf("[aix-proxy] model: %s → %s", model, mapped)
-			} else if base := strings.TrimSuffix(model, "[1m]"); base != model {
+			mapped, ok := provider.Models[model]
+			if !ok {
+				base := strings.TrimSuffix(model, "[1m]")
 				// Claude Desktop and Claude Code address 1M-context variants
 				// as "<alias>[1m]"; the suffix is a client-side context hint,
 				// and AIX upstreams that support 1M context serve it under the
 				// base model id, so rewrite the variant to the same mapping.
-				if mapped, ok := provider.Models[base]; ok {
-					data["model"], _ = json.Marshal(mapped)
+				if base != model {
+					mapped, ok = provider.Models[base]
+				}
+			}
+			if ok {
+				data["model"], _ = json.Marshal(mapped)
+				// Log only real rewrites. Identity mappings (e.g. live-catalog
+				// providers whose client model already matches upstream) are
+				// pure noise.
+				if model != mapped {
 					log.Printf("[aix-proxy] model: %s → %s", model, mapped)
 				}
 			}

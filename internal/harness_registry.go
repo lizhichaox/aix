@@ -72,6 +72,7 @@ type HarnessSelection struct {
 	Model         string
 	ClientModel   string
 	UpstreamModel string
+	ContextWindow int
 	Effort        string
 }
 
@@ -428,6 +429,7 @@ func ResolveHarnessSelection(harnessID, providerID, model, effort string) (Harne
 		Model:         resolved.ID,
 		ClientModel:   resolved.ClientModel,
 		UpstreamModel: resolved.UpstreamModel,
+		ContextWindow: resolved.ContextWindow,
 		Effort:        effort,
 	}, nil
 }

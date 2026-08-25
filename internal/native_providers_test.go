@@ -97,8 +97,8 @@ func TestEnsureProviderTemplateUserNative(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(raw)
-	if !strings.Contains(content, "mode = \"native\"") || !strings.Contains(content, "model = \"my-model\"") {
-		t.Errorf("unexpected native template: %s", content)
+	if !strings.Contains(content, "mode = \"proxy\"") || !strings.Contains(content, "model = \"my-model\"") {
+		t.Errorf("unexpected managed Responses template: %s", content)
 	}
 	created, err = EnsureProviderTemplate("codex", "mynative")
 	if err != nil || created {

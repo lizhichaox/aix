@@ -75,7 +75,7 @@ else
 
     if [ -f "$HOME/.aix/proxy.toml" ]; then
         AIX_INTERNAL_INSTALL_SERVICE=1 "$BIN_DIR/aix" || \
-            echo "  ⚠ Claude gateway service refresh failed; run aix setup"
+            echo "  ⚠ AIX gateway service refresh failed; run aix setup"
     fi
 
     # Check if BIN_DIR is on PATH

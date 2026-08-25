@@ -165,12 +165,12 @@ claude-fable-5 = "deepseek-v4-pro"
 		}
 	}
 	if first, ok := models[0].(map[string]interface{}); ok {
-		want := ClaudeDesktop1MModelID(ClaudeCodeDeepSeekModel)
+		want := ClaudeCodeDeepSeekModel
 		if first["name"] != want {
-			t.Errorf("default picker model = %v, want %q (flash 1M selected)", first["name"], want)
+			t.Errorf("default picker model = %v, want %q", first["name"], want)
 		}
-		if label, _ := first["labelOverride"].(string); !strings.HasSuffix(label, " [1M]") {
-			t.Errorf("default picker model %q should carry a visible 1M label", first["name"])
+		if first["supports1m"] != true || first["prefer1m"] != true {
+			t.Errorf("default picker model %q should prefer its native 1M variant: %#v", first["name"], first)
 		}
 	}
 
@@ -190,12 +190,12 @@ claude-fable-5 = "deepseek-v4-pro"
 		t.Fatal("inferenceModels missing after pro switch")
 	}
 	if first, ok := models[0].(map[string]interface{}); ok {
-		want := ClaudeDesktop1MModelID(ClaudeCodeDeepSeekProModel)
+		want := ClaudeCodeDeepSeekProModel
 		if first["name"] != want {
-			t.Errorf("default picker model = %v, want %q (pro 1M selected)", first["name"], want)
+			t.Errorf("default picker model = %v, want %q", first["name"], want)
 		}
-		if label, _ := first["labelOverride"].(string); !strings.HasSuffix(label, " [1M]") {
-			t.Errorf("default picker model %q should carry a visible 1M label", first["name"])
+		if first["supports1m"] != true || first["prefer1m"] != true {
+			t.Errorf("default picker model %q should prefer its native 1M variant: %#v", first["name"], first)
 		}
 	}
 
@@ -331,19 +331,22 @@ func TestDesktop3pGatewayEntryLabelsDynamicDeepSeekModel(t *testing.T) {
 		t.Fatal("dynamic model missing from picker")
 	}
 	first, _ := models[0].(map[string]interface{})
-	if first["name"] != ClaudeDesktop1MModelID(alias) {
-		t.Errorf("dynamic picker alias = %v, want %q", first["name"], ClaudeDesktop1MModelID(alias))
+	if first["name"] != alias {
+		t.Errorf("dynamic picker alias = %v, want %q", first["name"], alias)
 	}
-	if first["labelOverride"] != upstream+" [1M]" {
-		t.Errorf("dynamic picker label = %v, want %q", first["labelOverride"], upstream+" [1M]")
+	if first["labelOverride"] != upstream {
+		t.Errorf("dynamic picker label = %v, want %q", first["labelOverride"], upstream)
+	}
+	if first["supports1m"] != true || first["prefer1m"] != true {
+		t.Errorf("dynamic picker default should prefer its native 1M variant: %#v", first)
 	}
 	if first["anthropicFamilyTier"] != "sonnet" || first["isFamilyDefault"] != true {
 		t.Errorf("first picker model must own the default sonnet tier: %#v", first)
 	}
-	if len(models) != 6 {
-		t.Fatalf("DeepSeek picker models = %d, want 1M and standard rows for 3 models", len(models))
+	if len(models) != 3 {
+		t.Fatalf("DeepSeek picker models = %d, want 3 native 1M-capable rows", len(models))
 	}
-	wantLabels := []string{upstream + " [1M]", upstream, DeepSeekV4FlashModel + " [1M]", DeepSeekV4FlashModel, DeepSeekV4ProModel + " [1M]", DeepSeekV4ProModel}
+	wantLabels := []string{upstream, DeepSeekV4FlashModel, DeepSeekV4ProModel}
 	for i, want := range wantLabels {
 		model, _ := models[i].(map[string]interface{})
 		if got := model["labelOverride"]; got != want {
@@ -352,15 +355,18 @@ func TestDesktop3pGatewayEntryLabelsDynamicDeepSeekModel(t *testing.T) {
 	}
 }
 
-func TestDesktopOpenCodeGoPickerShowsOnlySelectedModel(t *testing.T) {
+func TestDesktopOpenCodeGoPickerPrefersNative1MDefault(t *testing.T) {
 	entry := desktop3pGatewayEntry("http://127.0.0.1:2026/opencode-go", "key", "opencode-go", "")
 	models, _ := entry["inferenceModels"].([]interface{})
-	if len(models) != 6 {
-		t.Fatalf("default OpenCode Go picker models = %d, want 1M and standard rows for three DeepSeek models", len(models))
+	if len(models) != 3 {
+		t.Fatalf("default OpenCode Go picker models = %d, want three native 1M-capable DeepSeek models", len(models))
 	}
 	first, _ := models[0].(map[string]interface{})
-	if first["labelOverride"] != DefaultClaudeUpstreamModel+" [1M]" {
-		t.Errorf("first label = %v, want DeepSeek default 1M label", first["labelOverride"])
+	if first["labelOverride"] != DefaultClaudeUpstreamModel {
+		t.Errorf("first label = %v, want DeepSeek default label", first["labelOverride"])
+	}
+	if first["supports1m"] != true || first["prefer1m"] != true {
+		t.Errorf("default OpenCode Go model should prefer its native 1M variant: %#v", first)
 	}
 	for _, raw := range models {
 		model, _ := raw.(map[string]interface{})
@@ -372,8 +378,8 @@ func TestDesktopOpenCodeGoPickerShowsOnlySelectedModel(t *testing.T) {
 
 	entry = desktop3pGatewayEntry("http://127.0.0.1:2026/opencode-go", "key", "opencode-go", "minimax-m2.7")
 	models, _ = entry["inferenceModels"].([]interface{})
-	if len(models) != 7 {
-		t.Fatalf("explicit OpenCode Go picker models = %d, want selected model plus six DeepSeek rows", len(models))
+	if len(models) != 4 {
+		t.Fatalf("explicit OpenCode Go picker models = %d, want selected model plus three DeepSeek rows", len(models))
 	}
 	first, _ = models[0].(map[string]interface{})
 	if first["labelOverride"] != "Claude Sonnet 4.6" {
