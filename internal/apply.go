@@ -310,10 +310,10 @@ func ApplyProviderWithSelection(app *HarnessInfo, providerName, model, effort st
 			}
 		}
 	}
-	// Codex only supports native Responses API providers; the proxy never
-	// performs protocol conversion.
+	// Codex only supports native Responses API providers; the gateway passes
+	// that protocol through without conversion.
 	if app.ID == "codex" && !IsNativeProvider(providerName) {
-		return fmt.Errorf("provider %q is not a Codex native provider; only native Responses API providers are supported for Codex (aix codex <provider> [model])", providerName)
+		return fmt.Errorf("provider %q is not a Codex Responses provider; only native Responses API providers are supported for Codex (aix codex <provider> [model])", providerName)
 	}
 	if model != "" {
 		if err := ValidateModelOverride(app, providerName, model); err != nil {
@@ -744,11 +744,11 @@ func writeDesktop3pAppConfig() error {
 // only accepts Anthropic-shaped ids; when such a slug is selected the default
 // falls back to the provider's first curated alias.
 //
-// Aliases whose upstream context window is known to be at least 1M tokens get
-// an explicit, separately labelled 1M row. Current Desktop builds render an
-// automatic supports1m variant with the same labelOverride as the standard
-// row, making the two rows indistinguishable. AIX maps both aliases to the same
-// upstream model while retaining the context choice in the picker label.
+// Aliases whose upstream context window is known to be at least 1M tokens
+// advertise supports1m. The first/default model also sets prefer1m so a new
+// conversation with no saved model selection starts on Claude Desktop's native
+// 1M-context variant. Claude Desktop deliberately preserves an explicit user
+// selection, so existing conversations are not rewritten by a provider switch.
 func desktop3pGatewayEntry(baseURL, gatewayKey, providerID, selectedModel string) map[string]interface{} {
 	entry := map[string]interface{}{
 		"inferenceProvider":          "gateway",
@@ -793,26 +793,21 @@ func desktop3pGatewayEntry(baseURL, gatewayKey, providerID, selectedModel string
 		if providerID == "deepseek" {
 			displayName = model.UpstreamModel
 		}
-		if model.ContextWindow >= oneMillionContext {
-			oneMillion := map[string]interface{}{
-				"name":          ClaudeDesktop1MModelID(model.ClientModel),
-				"labelOverride": displayName + " [1M]",
-			}
-			if i == 0 {
-				// Claude Desktop's default surface is the sonnet tier. Pinning the
-				// first entry to that tier makes its Default badge agree with the
-				// configured first/default model instead of the first sonnet-shaped
-				// fallback later in the list.
-				oneMillion["anthropicFamilyTier"] = "sonnet"
-				oneMillion["isFamilyDefault"] = true
-			}
-			models = append(models, oneMillion)
-		}
 		standard := map[string]interface{}{
 			"name":          model.ClientModel,
 			"labelOverride": displayName,
 		}
-		if i == 0 && model.ContextWindow < oneMillionContext {
+		if model.ContextWindow >= oneMillionContext {
+			standard["supports1m"] = true
+			if i == 0 {
+				standard["prefer1m"] = true
+			}
+		}
+		if i == 0 {
+			// Claude Desktop's default surface is the sonnet tier. Pinning the
+			// first entry to that tier makes its Default badge agree with the
+			// configured first/default model instead of the first sonnet-shaped
+			// fallback later in the list.
 			standard["anthropicFamilyTier"] = "sonnet"
 			standard["isFamilyDefault"] = true
 		}
@@ -907,7 +902,7 @@ func writeJSON(path string, v interface{}) error {
 
 func applyCodexProvider(providerName string, data map[string]interface{}) error {
 	if !IsNativeProvider(providerName) {
-		return fmt.Errorf("provider %q is not a Codex native provider; only native Responses API providers are supported for Codex", providerName)
+		return fmt.Errorf("provider %q is not a Codex Responses provider; only native Responses API providers are supported for Codex", providerName)
 	}
 	model, _ := data["model"].(string)
 	effort, _ := data["effort"].(string)
@@ -920,7 +915,7 @@ func applyCodexProvider(providerName string, data map[string]interface{}) error 
 	if key == "" {
 		return fmt.Errorf("%s API key not found; set $%s or add an auth_token for %q to proxy.toml", spec.Name, spec.EnvKey, spec.Name)
 	}
-	return ConfigureCodexNativeWithEffort(providerName, selection.ClientModel, selection.Effort, key)
+	return ConfigureCodexProxyWithEffort(providerName, selection.ClientModel, selection.Effort, key)
 }
 
 func backup(path, label string) error {

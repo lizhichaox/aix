@@ -10,8 +10,9 @@ and TOML. The current release version is defined in `cmd/root.go`.
 
 - Preserve conversation history. Provider switching may update configuration
   and Codex history tags, but must not rewrite or delete session contents.
-- Codex uses native Responses API providers directly. It never uses the AIX
-  proxy for native provider mode.
+- Codex CLI and Codex Desktop are one harness. Managed provider switches use
+  the provider's native Responses protocol through the private AIX gateway;
+  restore returns Codex to its OpenAI-native direct connection.
 - Claude Code and Claude Desktop are one harness: every provider switch applies
   to both. They use Anthropic-native providers through the private gateway.
 - Public commands, help, status output, JSON, and documentation must expose
@@ -19,9 +20,9 @@ and TOML. The current release version is defined in `cmd/root.go`.
   internal configuration targets only and must never appear as separate
   harnesses or status rows.
 - The proxy performs authentication, provider/model routing, model rewriting,
-  and SSE passthrough. It must not translate between
-  Responses, Chat Completions, or Anthropic protocols. Responses requests to
-  the proxy are rejected with a clear 501 error.
+  request route logging, and SSE passthrough. It must not translate between
+  Responses, Chat Completions, or Anthropic protocols. Codex Responses routes
+  require an explicit private provider prefix.
 - Claude switches are atomic across Code and Desktop. Codex switches remain
   independent.
 - AIX does not collect, persist, estimate, or display token usage or cost.
@@ -80,8 +81,9 @@ sandbox permission failures from code failures.
 - `aix codex <provider> [model] [effort]` accepts only providers in
   `NativeProviderSpecs()` plus user-defined entries from
   `~/.aix/native.toml`.
-- Native application writes `~/.codex/config.toml` and
-  `~/.codex/models.json`; it must not start or depend on the proxy.
+- Managed application writes `~/.codex/config.toml` and
+  `~/.codex/models.json`, creates an isolated `codex-<provider>` gateway route,
+  and starts or reloads the gateway before relaunching the host app.
 - Validate `--model` through the provider registry. Do not add provider-specific
   branches when registry metadata can express the behavior.
 - Catalog entries need `display_name`, `supported_reasoning_levels`, and
@@ -156,18 +158,18 @@ When adding a built-in provider, prefer one registry entry plus a preset in
 validation, catalog generation, template staleness checks, and restore logic
 registry-driven.
 
-## Private Claude gateway and diagnostics
+## Private AIX gateway and diagnostics
 
 - The gateway has no public lifecycle command. Setup installs its service and
-  Claude provider switches start or reload it on demand.
-- Native-only Codex operation must not be reported as a gateway failure.
+  managed Claude or Codex provider switches start or reload it on demand.
+- Restored native Codex operation must not be reported as a gateway failure.
 - Mapping diagnostics are exposed only through
   `aix <harness> <provider> --doctor`.
 - Provider routing for `/v1/messages` requires an Anthropic-compatible
   upstream; Chat Completions routing uses provider/model mappings and optional
   `/<provider>/v1/...` prefixes.
-- `~/.aix/proxy.log` commonly contains `responses upstream status: 501` when a
-  client incorrectly sends Responses traffic through the proxy.
+- Provider routing for `/v1/responses` requires a `codex-<provider>` prefix and
+  forwards the request and streaming response without protocol conversion.
 
 ## Command surface
 

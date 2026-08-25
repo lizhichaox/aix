@@ -24,7 +24,7 @@ is available.
 Security reports are especially useful for issues involving:
 
 - exposure of provider credentials;
-- unauthorized access to the local Claude gateway;
+- unauthorized access to the local AIX gateway;
 - unsafe writes to Claude or Codex configuration;
 - loss or unintended modification of conversation data;
 - command or path injection;

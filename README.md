@@ -16,7 +16,7 @@ The default model and effort come from the harness-specific registry at
 
 ## Installation
 
-AIX requires Go 1.23 or later. The CLI and its private Claude gateway support
+AIX requires Go 1.23 or later. The CLI and its private AIX gateway support
 macOS and Linux. Claude Desktop integration is currently macOS-only. Windows
 builds do not install a background gateway service and are not currently a
 supported configuration.
@@ -64,9 +64,13 @@ aix
 └── log
 ```
 
-Claude switches always update Claude Code and Claude Desktop together.
-Codex connects directly to native Responses API providers. Claude uses an
-internal Anthropic Messages gateway that AIX starts and reloads automatically.
+Claude switches always update Claude Code and Claude Desktop together. Managed
+Claude and Codex providers use a private AIX gateway that AIX starts and
+reloads automatically. Claude traffic remains Anthropic Messages end to end;
+Codex traffic remains Responses end to end. The gateway authenticates, routes,
+rewrites model IDs, logs routing metadata, and passes streaming responses
+through without translating protocols. `aix codex restore` returns Codex to
+its default OpenAI-native direct connection.
 
 Both harnesses support the same mapping flags:
 
@@ -115,27 +119,36 @@ Future harnesses can add their own mapping without changing the command shape.
 - Claude provider changes are applied to Code and Desktop as one operation.
 - Claude Desktop is restarted automatically after a switch. Use
   `aix claude restart` to re-apply the active configuration manually.
-- The Claude gateway is private infrastructure; setup and provider switches
+- The AIX gateway is private infrastructure; setup and managed provider switches
   manage its service lifecycle automatically.
-- Codex never uses the Claude gateway. It connects directly to the selected
-  Responses API provider.
+- Codex sends managed-provider Responses traffic through an isolated gateway
+  route. `aix codex restore` bypasses the gateway and restores OpenAI native.
 - Codex history tags are synchronized automatically after provider changes;
   conversation contents are never deleted or rewritten.
 - Configuration changes are backed up under `~/.aix/backups/`.
 
 The gateway listens on `127.0.0.1:2026` by default. AIX sends requests only to
 the provider selected by the user. Provider APIs receive the request data
-submitted by Claude; AIX itself has no telemetry or analytics service.
+submitted by the harness; AIX itself has no telemetry or analytics service.
+
+## Known limitations
+
+- Some Anthropic-compatible upstreams, including the currently observed
+  OpenCode Go route, may return `404` for `/v1/messages/count_tokens` while
+  normal `/v1/messages` requests continue to succeed. AIX passes this endpoint
+  through and does not fabricate or estimate token counts. A future fix should
+  use an upstream-native counting endpoint when one becomes available without
+  introducing protocol translation or local usage accounting.
 
 ## Configuration files
 
 ```text
 ~/.aix/harnesses.toml       Harness/provider/model/effort mappings
-~/.aix/proxy.toml           Internal Claude gateway providers and credentials
+~/.aix/proxy.toml           Internal AIX gateway providers and credentials
 ~/.aix/state.toml           Active providers
 ~/.aix/providers/           Generated client templates
 ~/.aix/backups/             Configuration backups
-~/.aix/proxy.log            Claude gateway log
+~/.aix/proxy.log            AIX gateway log
 ~/.codex/config.toml        Codex configuration
 ~/.codex/models.json        Codex desktop model catalog
 ~/.claude/settings.json     Claude Code configuration

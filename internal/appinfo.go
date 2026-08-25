@@ -37,7 +37,7 @@ func (a *HarnessInfo) StatusMode() (mode, provider, detail string) {
 				if env, ok := s["env"].(map[string]interface{}); ok {
 					if url, ok := env["ANTHROPIC_BASE_URL"].(string); ok && url != "" {
 						if isLocalProxyURL(url) {
-							return "proxy", "", url
+							return "gateway", "", url
 						}
 						return "direct", "", url
 					}
@@ -86,7 +86,7 @@ func (a *HarnessInfo) StatusMode() (mode, provider, detail string) {
 					detail := model
 					if p != "" {
 						if cfg, err := LoadProxyConfig(); err == nil {
-							if provider, ok := cfg.Providers[p]; ok && provider != nil {
+							if provider, ok := cfg.Providers[CodexProxyProviderID(p)]; ok && provider != nil {
 								if mapped, ok := provider.Models[model]; ok {
 									detail = mapped
 								}
@@ -94,7 +94,15 @@ func (a *HarnessInfo) StatusMode() (mode, provider, detail string) {
 						}
 						detail += " via " + p
 					}
-					return "responses", p, detail
+					mode := "responses"
+					if providers, ok := s["model_providers"].(map[string]interface{}); ok {
+						if raw, ok := providers[p].(map[string]interface{}); ok {
+							if baseURL, _ := raw["base_url"].(string); isLocalProxyURL(baseURL) {
+								mode = "gateway"
+							}
+						}
+					}
+					return mode, p, detail
 				}
 			}
 		}
@@ -102,11 +110,11 @@ func (a *HarnessInfo) StatusMode() (mode, provider, detail string) {
 		if baseURL, err := excalidrawActiveBaseURL(); err == nil && baseURL != "" {
 			detail := "chat completions → " + baseURL
 			if isLocalProxyURL(baseURL) {
-				return "proxy", "", detail
+				return "gateway", "", detail
 			}
 			return "direct", "", detail
 		}
-		return "proxy", "", "chat completions"
+		return "gateway", "", "chat completions"
 	}
 	return "", "", ""
 }
@@ -141,6 +149,42 @@ func CurrentHarnessEffort(harnessID string) string {
 		return strings.TrimSpace(effort)
 	}
 	return ""
+}
+
+// CurrentHarnessModel returns the model currently written to a harness and
+// its known upstream context window. Managed Claude aliases are resolved back
+// to the provider model so public status output does not expose internal
+// compatibility names. A zero context window means the active catalog does
+// not declare one.
+func CurrentHarnessModel(harnessID, providerID string) (string, int) {
+	model := ""
+	switch harnessID {
+	case HarnessClaude:
+		data, err := os.ReadFile(ClaudeSettingsPath())
+		if err == nil {
+			var settings map[string]interface{}
+			if json.Unmarshal(data, &settings) == nil {
+				env, _ := settings["env"].(map[string]interface{})
+				model, _ = env["ANTHROPIC_DEFAULT_SONNET_MODEL"].(string)
+			}
+		}
+	case HarnessCodex:
+		data, err := os.ReadFile(CodexConfigPath())
+		if err == nil {
+			var config map[string]interface{}
+			if toml.Unmarshal(data, &config) == nil {
+				model, _ = config["model"].(string)
+			}
+		}
+	}
+	model = strings.TrimSpace(model)
+	if providerID != "" && providerID != "-" && providerID != "anthropic" && providerID != "openai" {
+		selection, err := ResolveHarnessSelection(harnessID, providerID, model, "")
+		if err == nil {
+			return selection.UpstreamModel, selection.ContextWindow
+		}
+	}
+	return strings.TrimSuffix(model, "[1m]"), 0
 }
 
 // isLocalProxyURL reports whether u points at the local AIX proxy listener
@@ -338,8 +382,8 @@ deployment_mode = "3p"
 		if spec, ok := NativeProvider(providerID); ok {
 			return a.NativeTemplateContent(providerID, spec)
 		}
-		// Codex only supports native providers; non-native presets never get
-		// a proxy template (they would require protocol conversion).
+		// Codex only supports native Responses providers; non-native presets
+		// would require forbidden protocol conversion.
 		return ""
 	case "excalidraw":
 		return a.CustomTemplateContent(providerID, preset.Name, preset.CodexModel, "127.0.0.1:2026")
@@ -347,13 +391,14 @@ deployment_mode = "3p"
 	return ""
 }
 
-// NativeTemplateContent returns the codex template for a native provider.
+// NativeTemplateContent returns the Codex template for a native Responses
+// provider routed through the private AIX gateway.
 func (a *HarnessInfo) NativeTemplateContent(providerID string, spec NativeProviderSpec) string {
 	if a.ID != "codex" {
 		return ""
 	}
-	return fmt.Sprintf(`description = "%s native Responses API (no proxy)"
-mode = "native"
+	return fmt.Sprintf(`description = "%s via AIX gateway (Responses passthrough)"
+mode = "proxy"
 model = "%s"
 `, spec.Name, spec.DefaultModel)
 }

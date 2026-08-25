@@ -26,6 +26,37 @@ func TestIsLocalProxyURL(t *testing.T) {
 	}
 }
 
+func TestCodexStatusModeDistinguishesManagedAndNativeResponses(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(CodexConfigPath()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	app, err := ResolveHarness("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed := `model = "gpt-5.6-luna"
+model_provider = "opencode-go"
+
+[model_providers.opencode-go]
+base_url = "http://127.0.0.1:2026/codex-opencode-go/v1"
+wire_api = "responses"
+`
+	if err := os.WriteFile(CodexConfigPath(), []byte(managed), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if mode, provider, _ := app.StatusMode(); mode != "gateway" || provider != "opencode-go" {
+		t.Errorf("managed StatusMode = %q/%q", mode, provider)
+	}
+	direct := strings.Replace(managed, "http://127.0.0.1:2026/codex-opencode-go/v1", "https://opencode.ai/zen/go/v1", 1)
+	if err := os.WriteFile(CodexConfigPath(), []byte(direct), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if mode, provider, _ := app.StatusMode(); mode != "responses" || provider != "opencode-go" {
+		t.Errorf("native StatusMode = %q/%q", mode, provider)
+	}
+}
+
 func TestCurrentHarnessEffort(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := os.MkdirAll(filepath.Dir(ClaudeSettingsPath()), 0755); err != nil {
@@ -46,6 +77,47 @@ func TestCurrentHarnessEffort(t *testing.T) {
 	}
 	if got := CurrentHarnessEffort(HarnessCodex); got != "max" {
 		t.Errorf("Codex effort = %q, want max", got)
+	}
+}
+
+func TestCurrentHarnessModelResolvesManagedAliasesAndContext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(ClaudeSettingsPath()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	alias, _ := ClaudeDeepSeekAlias(DefaultClaudeUpstreamModel)
+	settings := `{"env":{"ANTHROPIC_DEFAULT_SONNET_MODEL":"` + alias + `[1m]"}}`
+	if err := os.WriteFile(ClaudeSettingsPath(), []byte(settings), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, context := CurrentHarnessModel(HarnessClaude, "opencode-go")
+	if model != DefaultClaudeUpstreamModel || context != deepSeekV4ContextWindow {
+		t.Errorf("Claude model/context = %q/%d, want %q/%d", model, context, DefaultClaudeUpstreamModel, deepSeekV4ContextWindow)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(CodexConfigPath()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(CodexConfigPath(), []byte("model = \"deepseek-v4-pro\"\nmodel_provider = \"opencode-go\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, context = CurrentHarnessModel(HarnessCodex, "opencode-go")
+	if model != DeepSeekV4ProModel || context != deepSeekV4ContextWindow {
+		t.Errorf("Codex model/context = %q/%d, want %q/%d", model, context, DeepSeekV4ProModel, deepSeekV4ContextWindow)
+	}
+}
+
+func TestCurrentHarnessModelKeepsUnknownNativeModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(CodexConfigPath()), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(CodexConfigPath(), []byte("model = \"gpt-5.6-sol\"\nmodel_provider = \"openai\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, context := CurrentHarnessModel(HarnessCodex, "openai")
+	if model != "gpt-5.6-sol" || context != 0 {
+		t.Errorf("native model/context = %q/%d, want gpt-5.6-sol/0", model, context)
 	}
 }
 

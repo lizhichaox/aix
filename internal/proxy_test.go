@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -41,6 +44,7 @@ type mockResponseWriter struct {
 	statusCode int
 	body       *bytes.Buffer
 	header     http.Header
+	flushes    int
 }
 
 func newMockResponseWriter() *mockResponseWriter {
@@ -55,6 +59,11 @@ func (m *mockResponseWriter) Write(b []byte) (int, error) {
 	return m.body.Write(b)
 }
 func (m *mockResponseWriter) WriteHeader(code int) { m.statusCode = code }
+func (m *mockResponseWriter) Flush()               { m.flushes++ }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestNewProxyServer_WithProxy(t *testing.T) {
 	cfg := DefaultProxyConfig()
@@ -210,6 +219,91 @@ func TestExtractModelFromBody(t *testing.T) {
 	data, _ := io.ReadAll(r.Body)
 	if !bytes.Contains(data, []byte("gpt-5.5")) {
 		t.Error("body not restored")
+	}
+}
+
+func TestRequestHarness(t *testing.T) {
+	cases := map[string]string{
+		"/v1/messages":                             HarnessClaude,
+		"/opencode-go/v1/messages":                 HarnessClaude,
+		"/opencode-go/v1/messages/count_tokens":    HarnessClaude,
+		"/v1/responses":                            HarnessCodex,
+		"/codex-opencode-go/v1/responses":          HarnessCodex,
+		"/codex-opencode-go/v1/responses/compact":  HarnessCodex,
+		"/codex-opencode-go/v1/responses/resp_123": HarnessCodex,
+		"/v1/chat/completions":                     "unknown",
+		"/health":                                  "unknown",
+	}
+	for path, want := range cases {
+		if got := requestHarness(path); got != want {
+			t.Errorf("requestHarness(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestHandleRequestResponsesPassthrough(t *testing.T) {
+	cfg := &ProxyConfig{
+		GatewayKey: "gateway-key",
+		Providers: map[string]*ProviderConfig{
+			"codex-opencode-go": {
+				Name:      "OpenCode Go-Responses",
+				Upstream:  "https://opencode.ai/zen/go",
+				AuthToken: "upstream-key",
+				Models:    map[string]string{"client-model": "upstream-model"},
+			},
+		},
+	}
+	ps := NewProxyServer(cfg)
+	ps.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if got := req.URL.String(); got != "https://opencode.ai/zen/go/v1/responses?trace=1" {
+			t.Errorf("upstream URL = %q", got)
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer upstream-key" {
+			t.Errorf("upstream Authorization = %q", got)
+		}
+		body, _ := io.ReadAll(req.Body)
+		var payload map[string]interface{}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["model"] != "upstream-model" {
+			t.Errorf("rewritten payload = %#v", payload)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(bytes.NewBufferString("data: {\"type\":\"response.completed\"}\n\n")),
+		}, nil
+	})}
+
+	w := newMockResponseWriter()
+	body := `{"model":"client-model","reasoning":{"effort":"high"},"input":"hello"}`
+	r, _ := http.NewRequest("POST", "http://127.0.0.1:2026/codex-opencode-go/v1/responses?trace=1", bytes.NewBufferString(body))
+	r.Header.Set("Authorization", "Bearer gateway-key")
+	ps.handleRequest(w, r)
+
+	if w.statusCode != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.statusCode, w.body.String())
+	}
+	if !bytes.Contains(w.body.Bytes(), []byte("response.completed")) {
+		t.Errorf("streaming response was not passed through: %q", w.body.String())
+	}
+	if w.flushes == 0 {
+		t.Error("streaming response was not flushed")
+	}
+}
+
+func TestHandleRequestResponsesRequiresExplicitProvider(t *testing.T) {
+	cfg := &ProxyConfig{GatewayKey: "gateway-key", Providers: map[string]*ProviderConfig{
+		"codex-opencode-go": {Name: "OpenCode Go", Upstream: "https://example.invalid"},
+	}}
+	ps := NewProxyServer(cfg)
+	w := newMockResponseWriter()
+	r, _ := http.NewRequest("POST", "http://127.0.0.1:2026/v1/responses", bytes.NewBufferString(`{"model":"m"}`))
+	r.Header.Set("Authorization", "Bearer gateway-key")
+	ps.handleRequest(w, r)
+	if w.statusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.statusCode)
 	}
 }
 
@@ -588,6 +682,49 @@ func TestRewriteModel_NoModels(t *testing.T) {
 	}
 }
 
+func TestRewriteModel_IdentityMappingLogsNothing(t *testing.T) {
+	cfg := &ProxyConfig{Providers: map[string]*ProviderConfig{
+		"opencode-go": {
+			Name: "opencode-go", Upstream: "https://opencode.ai/zen/go",
+			Models: map[string]string{"deepseek-v4-flash-vision-exp": "deepseek-v4-flash-vision-exp"},
+		},
+	}}
+	ps := NewProxyServer(cfg)
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	body := []byte(`{"model":"deepseek-v4-flash-vision-exp","messages":[]}`)
+	rewritten := ps.rewriteModel(body, cfg.Providers["opencode-go"])
+	if !bytes.Contains(rewritten, []byte(`"deepseek-v4-flash-vision-exp"`)) {
+		t.Errorf("identity mapping should keep the model, body=%s", rewritten)
+	}
+	if strings.Contains(buf.String(), "model:") {
+		t.Errorf("identity mapping should not log a model rewrite, got: %s", buf.String())
+	}
+}
+
+func TestRewriteModel_RealRewriteLogs(t *testing.T) {
+	cfg := &ProxyConfig{Providers: map[string]*ProviderConfig{
+		"deepseek": {
+			Name: "deepseek", Upstream: "https://api.deepseek.com",
+			Models: map[string]string{"gpt-5.5": "deepseek-v4-pro"},
+		},
+	}}
+	ps := NewProxyServer(cfg)
+
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	body := []byte(`{"model":"gpt-5.5","messages":[]}`)
+	_ = ps.rewriteModel(body, cfg.Providers["deepseek"])
+	if !strings.Contains(buf.String(), "model: gpt-5.5 → deepseek-v4-pro") {
+		t.Errorf("real rewrite should log the mapping, got: %s", buf.String())
+	}
+}
+
 func TestExtractModelFromBytes(t *testing.T) {
 	model := extractModelFromBytes([]byte(`{"model":"gpt-5.5","messages":[]}`))
 	if model != "gpt-5.5" {
@@ -599,6 +736,80 @@ func TestExtractModelFromBytes_Invalid(t *testing.T) {
 	model := extractModelFromBytes([]byte(`{bad`))
 	if model != "" {
 		t.Errorf("model = %q, want empty", model)
+	}
+}
+
+func TestSetReasoningEffort_PinsEffort(t *testing.T) {
+	body := []byte(`{"model":"x","reasoning":{"effort":"medium"}}`)
+	got := setReasoningEffort(body, "high")
+	if !bytes.Contains(got, []byte(`"effort":"high"`)) {
+		t.Errorf("effort not pinned, body=%s", got)
+	}
+	if bytes.Contains(got, []byte("medium")) {
+		t.Errorf("original effort leaked, body=%s", got)
+	}
+}
+
+func TestSetReasoningEffort_AddsWhenMissing(t *testing.T) {
+	body := []byte(`{"model":"x"}`)
+	got := setReasoningEffort(body, "high")
+	if !bytes.Contains(got, []byte(`"effort":"high"`)) {
+		t.Errorf("effort should be added, body=%s", got)
+	}
+}
+
+func TestSetReasoningEffort_EmptyEffortNoop(t *testing.T) {
+	body := []byte(`{"model":"x","reasoning":{"effort":"medium"}}`)
+	got := setReasoningEffort(body, "")
+	if !bytes.Contains(got, []byte("medium")) {
+		t.Errorf("empty effort should leave body untouched, body=%s", got)
+	}
+}
+
+func TestSetReasoningEffort_InvalidBodyNoop(t *testing.T) {
+	body := []byte(`{bad`)
+	got := setReasoningEffort(body, "high")
+	if string(got) != string(body) {
+		t.Errorf("invalid body should be untouched, got=%s", got)
+	}
+}
+
+func TestIsGatewayReady_PrefersHealthFallback(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(ProxyHealth{Status: "ok"})
+	}))
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+
+	if err := EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultProxyConfig()
+	cfg.Listen = addr
+	if err := WriteProxyConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh temp HOME has no PID file; only the health endpoint can attest.
+	RemovePidFile()
+	if !IsGatewayReady() {
+		t.Errorf("IsGatewayReady = false, want true via health endpoint %s", addr)
+	}
+}
+
+func TestIsGatewayReady_DownWhenNoPidAndNoHealth(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultProxyConfig()
+	cfg.Listen = "127.0.0.1:1" // closed port, and no PID file
+	if err := WriteProxyConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	RemovePidFile()
+	if IsGatewayReady() {
+		t.Errorf("IsGatewayReady = true, want false when nothing is listening")
 	}
 }
 

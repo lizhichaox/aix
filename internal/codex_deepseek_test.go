@@ -421,7 +421,7 @@ func TestApplyCodexNativeProviderEndToEnd(t *testing.T) {
 		t.Fatalf("ApplyProviderWithModel: %v", err)
 	}
 
-	// The per-app template was auto-created in native mode.
+	// The per-app template was auto-created in managed passthrough mode.
 	if _, err := os.Stat(ProviderPath("codex", "opencode-zen")); err != nil {
 		t.Fatalf("template was not created: %v", err)
 	}
@@ -429,12 +429,13 @@ func TestApplyCodexNativeProviderEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content := string(raw); !strings.Contains(content, "mode = \"native\"") ||
+	if content := string(raw); !strings.Contains(content, "mode = \"proxy\"") ||
 		!strings.Contains(content, "model = \"deepseek-v4-flash\"") {
 		t.Errorf("unexpected native template: %s", content)
 	}
 
-	// The Codex config was written with the provider's base URL and key.
+	// Codex receives the local route and gateway key; the upstream credential
+	// stays in AIX's private provider configuration.
 	config, err := readTomlMap(CodexConfigPath())
 	if err != nil {
 		t.Fatal(err)
@@ -444,8 +445,16 @@ func TestApplyCodexNativeProviderEndToEnd(t *testing.T) {
 	}
 	providers, _ := config["model_providers"].(map[string]interface{})
 	zen, _ := providers["opencode-zen"].(map[string]interface{})
-	if zen["base_url"] != "https://opencode.ai/zen/v1" || zen["experimental_bearer_token"] != "sk-zen" {
+	if zen["base_url"] != "http://127.0.0.1:2026/codex-opencode-zen/v1" || zen["experimental_bearer_token"] != DefaultGatewayAPIKey {
 		t.Errorf("opencode-zen provider block = %#v", zen)
+	}
+	proxyCfg, err := LoadProxyConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyProvider := proxyCfg.Providers[CodexProxyProviderID("opencode-zen")]
+	if proxyProvider == nil || proxyProvider.Upstream != "https://opencode.ai/zen" || proxyProvider.AuthToken != "sk-zen" {
+		t.Errorf("Codex proxy provider = %#v", proxyProvider)
 	}
 }
 
@@ -477,8 +486,15 @@ func TestSwitchNativeProviderKeepsPreviousProviderConfig(t *testing.T) {
 		t.Error("opencode-go provider block missing")
 	}
 	ds, _ := providers["deepseek"].(map[string]interface{})
-	if ds["experimental_bearer_token"] != "sk-deepseek" {
-		t.Errorf("deepseek key not preserved: %#v", ds)
+	if ds["experimental_bearer_token"] != DefaultGatewayAPIKey {
+		t.Errorf("deepseek gateway key not preserved: %#v", ds)
+	}
+	proxyCfg, err := LoadProxyConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := proxyCfg.Providers[CodexProxyProviderID("deepseek")].AuthToken; got != "sk-deepseek" {
+		t.Errorf("deepseek upstream key = %q, want sk-deepseek", got)
 	}
 }
 

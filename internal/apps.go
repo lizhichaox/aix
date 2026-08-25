@@ -115,9 +115,8 @@ func ListProviders(appID string) ([]string, error) {
 		sort.Strings(out)
 		return out, nil
 	}
-	// Codex only supports native Responses API providers: always expose the
-	// registry and hide legacy proxy/custom templates that would need
-	// protocol conversion.
+	// Codex only supports native Responses API providers: expose the registry
+	// and hide custom templates that would require protocol conversion.
 	if appID == "codex" {
 		seen := make(map[string]bool, len(names))
 		registry, _ := LoadHarnessRegistry()

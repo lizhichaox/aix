@@ -57,7 +57,8 @@ func ActiveCodexProvider() string {
 // model_provider (openai/codex#31625), which hides conversations recorded
 // under other providers even though the data is intact. Retagging makes the
 // full history visible again under the current provider. Every modified file
-// is backed up first; subagent rollouts are never touched.
+// is backed up first. Paginated lineages are left byte-for-byte intact because
+// their continuations store offsets into earlier rollouts.
 func SyncCodexHistory(targetProvider string) (CodexHistorySyncResult, error) {
 	targetProvider = strings.TrimSpace(targetProvider)
 	if targetProvider == "" {
@@ -101,6 +102,7 @@ func SyncCodexHistory(targetProvider string) (CodexHistorySyncResult, error) {
 }
 
 func retagRolloutFiles(target, backupDir string, res *CodexHistorySyncResult) error {
+	paginated := paginatedCodexThreadIDs()
 	handle := func(path string) error {
 		meta, ok, err := readSessionMetaFirstLine(path)
 		if err != nil {
@@ -110,13 +112,20 @@ func retagRolloutFiles(target, backupDir string, res *CodexHistorySyncResult) er
 		if !ok {
 			return nil
 		}
-		// Normalize every rollout, not only those changing provider. The host's
-		// sidebar surfaces subagent threads under their own provider tag, so a
-		// rollout left on a stale provider fragments the history after a switch
-		// (root threads move, subagent threads stay behind). A thread may also
-		// already sit on the target provider yet still carry foreign reasoning
-		// content from living under another provider earlier; repairing it keeps
-		// the sidebar history portable and resumable after a switch.
+		threadID := meta.Payload.SessionID
+		if threadID == "" {
+			threadID = meta.Payload.ID
+		}
+		// A paginated continuation stores an exact byte offset into its source
+		// rollout. Even changing only the source's first-line provider tag moves
+		// that boundary, so keep every rollout in such a lineage byte-for-byte
+		// intact and rely on the state database's provider tag for visibility.
+		if paginated[threadID] {
+			res.Already++
+			return nil
+		}
+		// Retag every non-paginated rollout, including subagent rollouts, so the
+		// sidebar does not fragment one conversation across provider filters.
 		newContent, changed, err := transformRolloutForProvider(path, target)
 		if err != nil {
 			res.Failed++
@@ -173,6 +182,41 @@ func retagRolloutFiles(target, backupDir string, res *CodexHistorySyncResult) er
 	return nil
 }
 
+// paginatedCodexThreadIDs returns every thread participating in a paginated
+// lineage. Those rollouts must remain immutable because descendants address
+// their source history by byte offset.
+func paginatedCodexThreadIDs() map[string]bool {
+	ids := make(map[string]bool)
+	inspect := func(path string) {
+		meta, ok, err := readSessionMetaFirstLine(path)
+		if err != nil || !ok || meta.Payload.HistoryBase == nil {
+			return
+		}
+		if id := meta.Payload.HistoryBase.ThreadID; id != "" {
+			ids[id] = true
+		}
+		if id := meta.Payload.SessionID; id != "" {
+			ids[id] = true
+		} else if id := meta.Payload.ID; id != "" {
+			ids[id] = true
+		}
+	}
+	_ = filepath.WalkDir(CodexSessionsDir(), func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(d.Name(), ".jsonl") {
+			inspect(path)
+		}
+		return nil
+	})
+	if entries, err := os.ReadDir(CodexArchivedSessionsDir()); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".jsonl") {
+				inspect(filepath.Join(CodexArchivedSessionsDir(), entry.Name()))
+			}
+		}
+	}
+	return ids
+}
+
 type sessionMetaLine struct {
 	Timestamp string `json:"timestamp"`
 	Type      string `json:"type"`
@@ -180,6 +224,9 @@ type sessionMetaLine struct {
 		ID            string `json:"id"`
 		SessionID     string `json:"session_id"`
 		ModelProvider string `json:"model_provider"`
+		HistoryBase   *struct {
+			ThreadID string `json:"thread_id"`
+		} `json:"history_base"`
 	} `json:"payload"`
 }
 
@@ -215,29 +262,21 @@ func backupFile(path, dest string) error {
 	return writePrivateFile(dest, data)
 }
 
-// transformRolloutForProvider returns the serialized content of a rollout after
-// porting it to the target native provider: the session_meta model_provider is
-// set to target and every reasoning item is normalized to the shape any
-// Responses API provider accepts on replay. Providers (and models) are dynamic,
-// so the normalization keys on the item type rather than any provider id. It
-// also reports whether the content changed, so the caller backs up and writes
-// only when there is something to do.
+// transformRolloutForProvider returns the rollout with only the session_meta
+// provider tag changed. Conversation items are immutable: paginated history
+// stores byte offsets into source rollouts, so reserializing reasoning or other
+// items can corrupt a thread lineage even when the JSON remains valid.
 func transformRolloutForProvider(path, target string) (string, bool, error) {
 	original, err := os.ReadFile(path)
 	if err != nil {
 		return "", false, err
 	}
 	lines := strings.Split(strings.TrimSuffix(string(original), "\n"), "\n")
-	out := make([]string, 0, len(lines))
-	for i, line := range lines {
-		if i == 0 {
-			line = rewriteSessionMeta(line, target)
-		} else {
-			line = normalizeReasoningLine(line)
-		}
-		out = append(out, line)
+	if len(lines) == 0 {
+		return string(original), false, nil
 	}
-	newContent := strings.Join(out, "\n") + "\n"
+	lines[0] = rewriteSessionMeta(lines[0], target)
+	newContent := strings.Join(lines, "\n") + "\n"
 	return newContent, newContent != string(original), nil
 }
 
@@ -257,67 +296,6 @@ func rewriteSessionMeta(line, target string) string {
 		return line
 	}
 	payload["model_provider"] = target
-	raw["payload"] = payload
-	out, err := json.Marshal(raw)
-	if err != nil {
-		return line
-	}
-	return string(out)
-}
-
-// normalizeReasoningLine rewrites a single rollout line, normalizing a
-// response_item of type "reasoning" into the shape every Responses API provider
-// accepts when replaying history. Native providers differ in how they store
-// reasoning: OpenAI keeps only a summary plus an encrypted_content blob, while
-// others (DeepSeek, OpenCode, OpenRouter) store the plaintext thinking in the
-// content array. The Responses API rejects a non-empty reasoning content array
-// on replay (content must have length 0), so a thread retagged to a different
-// provider fails with "array_above_max_length". Moving the plaintext thinking
-// into summary and dropping provider-specific encrypted_content makes the item
-// portable. Lines without that change are returned byte-for-byte unchanged.
-func normalizeReasoningLine(line string) string {
-	var raw map[string]interface{}
-	if err := json.Unmarshal([]byte(line), &raw); err != nil {
-		return line
-	}
-	payload, ok := raw["payload"].(map[string]interface{})
-	if raw["type"] != "response_item" || !ok || payload["type"] != "reasoning" {
-		return line
-	}
-	changed := false
-	// Preserve the plaintext thinking as a summary when no summary exists yet.
-	if content, ok := payload["content"].([]interface{}); ok && len(content) > 0 {
-		changed = true
-		if existing, _ := payload["summary"].([]interface{}); len(existing) == 0 {
-			summary := make([]interface{}, 0, len(content))
-			for _, part := range content {
-				pm, ok := part.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				if text, ok := pm["text"].(string); ok && text != "" {
-					summary = append(summary, map[string]interface{}{
-						"type": "summary_text",
-						"text": text,
-					})
-				}
-			}
-			if len(summary) > 0 {
-				payload["summary"] = summary
-			}
-		}
-		// Empty the content array so the API's max-0 constraint is satisfied.
-		payload["content"] = []interface{}{}
-	}
-	// The encrypted blob is only decryptable by the provider that created it,
-	// so it does not survive a port to another provider.
-	if _, ok := payload["encrypted_content"]; ok {
-		changed = true
-		delete(payload, "encrypted_content")
-	}
-	if !changed {
-		return line
-	}
 	raw["payload"] = payload
 	out, err := json.Marshal(raw)
 	if err != nil {

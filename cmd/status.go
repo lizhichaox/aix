@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/lizhichaox/aix/internal"
@@ -22,6 +23,8 @@ type harnessStatus struct {
 	Name     string   `json:"name"`
 	Provider string   `json:"provider"`
 	Mode     string   `json:"mode"`
+	Model    string   `json:"model,omitempty"`
+	Context  int      `json:"context_length"`
 	Effort   string   `json:"effort,omitempty"`
 	Choices  []string `json:"choices,omitempty"`
 }
@@ -40,9 +43,9 @@ var statusCmd = &cobra.Command{
 		}
 
 		data.Harnesses = buildHarnessStatuses(state)
-		if claudeManaged(data.Harnesses) {
-			if running, _ := internal.IsProxyRunning(); !running {
-				data.Issue = "Claude gateway is not running; switch the Claude provider again to recover"
+		if anyManaged(data.Harnesses) {
+			if !internal.IsGatewayReady() {
+				data.Issue = "AIX gateway is not running; switch the managed provider again to recover"
 			}
 		}
 
@@ -53,9 +56,8 @@ var statusCmd = &cobra.Command{
 		}
 
 		// Text output
-		sep := "  "
-
-		fmt.Printf("%s%-22s %-8s %-12s %-8s %s\n", sep, "Harness", "Type", "Provider", "Effort", "Options")
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "  Harness\tType\tProvider\tModel\tContext-Length\tEffort\tOptions")
 		for _, a := range data.Harnesses {
 			provider := a.Provider
 			if provider == "" || provider == "-" {
@@ -69,8 +71,15 @@ var statusCmd = &cobra.Command{
 			if len(a.Choices) > 0 {
 				options = strings.Join(a.Choices, ", ")
 			}
-			fmt.Printf("%s%-22s %-8s %-12s %-8s %s\n",
-				sep, a.Name, connectionLabel(a.Mode), provider, effort, options)
+			model := a.Model
+			if model == "" {
+				model = "—"
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				a.Name, connectionLabel(a.Mode), provider, model, formatContextLength(a.Context), effort, options)
+		}
+		if err := tw.Flush(); err != nil {
+			return err
 		}
 
 		if data.LastSwitch != "" {
@@ -87,9 +96,9 @@ var statusCmd = &cobra.Command{
 	},
 }
 
-func claudeManaged(harnesses []harnessStatus) bool {
+func anyManaged(harnesses []harnessStatus) bool {
 	for _, harness := range harnesses {
-		if harness.ID == internal.HarnessClaude && harness.Provider != "" && harness.Provider != "-" && harness.Mode != "native" {
+		if harness.Provider != "" && harness.Provider != "-" && connectionLabel(harness.Mode) == "managed" {
 			return true
 		}
 	}
@@ -115,6 +124,7 @@ func buildClaudeStatus(state *internal.State) harnessStatus {
 		status.Mode = "gateway"
 	}
 	status.Effort = statusEffort(internal.HarnessClaude, status.Provider)
+	status.Model, status.Context = internal.CurrentHarnessModel(internal.HarnessClaude, status.Provider)
 	status.Choices = providerChoices("claudecode", status.Provider)
 	return status
 }
@@ -131,9 +141,29 @@ func buildCodexStatus(state *internal.State) harnessStatus {
 			status.Provider = provider
 		}
 	}
+	if status.Provider == "" || status.Provider == "-" {
+		status.Provider = "openai"
+		status.Mode = "native"
+	}
 	status.Effort = statusEffort(internal.HarnessCodex, status.Provider)
+	status.Model, status.Context = internal.CurrentHarnessModel(internal.HarnessCodex, status.Provider)
 	status.Choices = providerChoices("codex", status.Provider)
 	return status
+}
+
+func formatContextLength(context int) string {
+	if context <= 0 {
+		return "unknown"
+	}
+	const mebibyte = 1024 * 1024
+	const kibibyte = 1024
+	if context%mebibyte == 0 {
+		return fmt.Sprintf("%dM", context/mebibyte)
+	}
+	if context%kibibyte == 0 {
+		return fmt.Sprintf("%dK", context/kibibyte)
+	}
+	return fmt.Sprintf("%d", context)
 }
 
 func providerChoices(appID, current string) []string {

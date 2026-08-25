@@ -204,3 +204,58 @@ func EnsureClaudeProxyProvider(providerID string) error {
 	}
 	return WriteProxyConfig(cfg)
 }
+
+// CodexProxyProviderID returns the private proxy.toml provider ID used for a
+// Codex Responses route. The prefix keeps Codex routing and model mappings
+// independent from the Anthropic-shaped route used by Claude.
+func CodexProxyProviderID(providerID string) string {
+	return "codex-" + providerID
+}
+
+// EnsureCodexProxyProvider configures a native Responses passthrough route and
+// returns the local base URL and gateway credential that Codex should use.
+func EnsureCodexProxyProvider(providerID, upstreamKey string) (string, string, error) {
+	spec, ok := NativeProvider(providerID)
+	if !ok {
+		return "", "", fmt.Errorf("provider %q is not a Codex Responses provider", providerID)
+	}
+	harness, ok := HarnessProvider(HarnessCodex, providerID)
+	if !ok {
+		return "", "", fmt.Errorf("provider %q has no Codex harness mapping in %s", providerID, HarnessRegistryPath())
+	}
+	cfg, err := LoadProxyConfigForWrite()
+	if err != nil {
+		return "", "", err
+	}
+	proxyID := CodexProxyProviderID(providerID)
+	key := strings.TrimSpace(upstreamKey)
+	if existing := cfg.Providers[proxyID]; existing != nil && strings.TrimSpace(existing.AuthToken) != "" {
+		key = strings.TrimSpace(existing.AuthToken)
+	}
+	if key == "" {
+		return "", "", fmt.Errorf("provider %q needs $%s (or add auth_token to %s)", providerID, spec.EnvKey, ProxyConfigPath())
+	}
+	models := make(map[string]string, len(harness.Models))
+	for _, model := range harness.Models {
+		models[model.ClientModel] = model.UpstreamModel
+	}
+	cfg.Providers[proxyID] = &ProviderConfig{
+		Name:      spec.Name + "-Responses",
+		Upstream:  codexProxyUpstream(harness.BaseURL),
+		AuthToken: key,
+		Models:    models,
+	}
+	if err := WriteProxyConfig(cfg); err != nil {
+		return "", "", err
+	}
+	listen := cfg.Listen
+	if strings.HasPrefix(listen, "0.0.0.0:") {
+		listen = "127.0.0.1:" + strings.TrimPrefix(listen, "0.0.0.0:")
+	}
+	return "http://" + listen + "/" + proxyID + "/v1", cfg.GatewayKey, nil
+}
+
+func codexProxyUpstream(baseURL string) string {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	return strings.TrimSuffix(baseURL, "/v1")
+}

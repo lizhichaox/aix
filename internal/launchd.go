@@ -65,7 +65,19 @@ func InstallLaunchd() (string, error) {
 	binary, _ = filepath.Abs(binary)
 	binary, _ = filepath.EvalSymlinks(binary)
 
-	if running, pid := IsProxyRunning(); running {
+	// Stop a launchd-managed process by unloading the job first. Sending
+	// SIGTERM while KeepAlive is active makes launchd immediately spawn a
+	// replacement, which races with the subsequent unload/load and can expose a
+	// transient healthy process to readiness checks.
+	loaded := IsLaunchdLoaded()
+	if loaded {
+		out, unloadErr := exec.Command("launchctl", "unload", LaunchdPlistPath()).CombinedOutput()
+		if unloadErr != nil {
+			return "", fmt.Errorf("launchctl unload: %w\n%s", unloadErr, string(out))
+		}
+	} else if running, pid := IsProxyRunning(); running {
+		// A process with no loaded launchd job is an older standalone gateway.
+		// Stop it explicitly before installing the managed service.
 		p, _ := os.FindProcess(pid)
 		p.Signal(syscall.SIGTERM)
 		died := false
@@ -86,12 +98,8 @@ func InstallLaunchd() (string, error) {
 				time.Sleep(50 * time.Millisecond)
 			}
 		}
-		RemovePidFile()
 	}
-
-	if IsLaunchdLoaded() {
-		exec.Command("launchctl", "unload", LaunchdPlistPath()).Run()
-	}
+	RemovePidFile()
 
 	os.MkdirAll(filepath.Dir(LaunchdPlistPath()), 0755)
 	os.MkdirAll(AixDir(), 0755)
@@ -122,7 +130,7 @@ func InstallLaunchd() (string, error) {
 func RestartLaunchd() error {
 	plistPath := LaunchdPlistPath()
 	if _, err := os.Stat(plistPath); os.IsNotExist(err) {
-		return fmt.Errorf("Claude gateway service is not installed; run aix setup")
+		return fmt.Errorf("AIX gateway service is not installed; run aix setup")
 	}
 	exec.Command("launchctl", "unload", plistPath).Run()
 	out, err := exec.Command("launchctl", "load", plistPath).CombinedOutput()

@@ -12,7 +12,7 @@ import (
 )
 
 // runCodexProvider implements "aix codex <provider> [model] [effort]": with no provider
-// it lists the registered native providers, with a provider it switches Codex
+// it lists the registered Responses providers, with a provider it switches Codex
 // to that provider's default model, and an optional second argument selects an
 // explicit model. --list shows the provider's models and defaults.
 // Fixed subcommands (restart/restore) are matched by cobra before this runs.
@@ -40,7 +40,7 @@ func runCodexProvider(cmd *cobra.Command, args []string) error {
 	}
 	spec, ok := internal.NativeProvider(provider)
 	if !ok {
-		return fmt.Errorf("unknown Codex native provider %q (available: %s)", provider, strings.Join(nativeProviderIDs(), ", "))
+		return fmt.Errorf("unknown Codex Responses provider %q (available: %s)", provider, strings.Join(nativeProviderIDs(), ", "))
 	}
 	model, effort := "", codexEffortFlag
 	if len(args) >= 2 {
@@ -55,7 +55,7 @@ func runCodexProvider(cmd *cobra.Command, args []string) error {
 	return switchCodexProvider(spec, model, effort)
 }
 
-// switchCodexProvider applies a Codex native provider switch. An empty model
+// switchCodexProvider applies a managed Codex provider switch. An empty model
 // resolves to the provider's default; DeepSeek's catalog metadata is then
 // best-effort refreshed from the official setup script.
 func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string) error {
@@ -99,12 +99,15 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 	if err := internal.SaveAppState("codex", spec.ID); err != nil {
 		return fmt.Errorf("save state: %w", err)
 	}
-	fmt.Printf("✓ Codex → %s, effort %s (%s native Responses API", selection.ClientModel, selection.Effort, spec.Name)
+	if err := ensureAIXGateway(); err != nil {
+		return err
+	}
+	fmt.Printf("✓ Codex → %s, effort %s (%s Responses API via AIX gateway", selection.ClientModel, selection.Effort, spec.Name)
 	if keySource != "" {
 		fmt.Printf("; key from %s", keySource)
 	}
 	fmt.Println(")")
-	fmt.Println("  No AIX proxy is required.")
+	fmt.Println("  Protocol is passed through without translation.")
 	if spec.ID == "deepseek" && os.Getenv("AIX_SKIP_CATALOG_REFRESH") == "" {
 		internal.RefreshDeepSeekCatalog()
 	}
@@ -153,11 +156,11 @@ func syncHistoryAfterSwitch(provider string) {
 }
 
 // codexProviderOverview renders the bare "aix codex" provider listing: every
-// registered native provider (direct Responses API, no proxy).
+// registered Responses provider routed through the private AIX gateway.
 func codexProviderOverview() string {
 	var b strings.Builder
 	active := activeCodexProviderID()
-	fmt.Fprintf(&b, "Codex supports these native providers (direct Responses API, no proxy):\n\n")
+	fmt.Fprintf(&b, "Codex supports these Responses providers through the private AIX gateway:\n\n")
 
 	for _, id := range nativeProviderIDs() {
 		spec, _ := internal.NativeProvider(id)

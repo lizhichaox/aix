@@ -159,10 +159,10 @@ func ClaudeCodeModelID(m ClaudeModel) string {
 	return m.Alias
 }
 
-// ClaudeDesktop1MModelID returns a distinct Anthropic-shaped gateway alias for
-// Claude Desktop's 1M picker row. Current Desktop builds render the automatic
-// supports1m variant with the same labelOverride as the standard row, so AIX
-// exposes the variant explicitly to keep the two rows visually distinct.
+// ClaudeDesktop1MModelID returns the legacy explicit 1M gateway alias. New
+// config entries use Claude Desktop's native supports1m/prefer1m fields, but
+// the proxy retains this mapping so conversations created by older AIX
+// versions continue to work.
 func ClaudeDesktop1MModelID(alias string) string {
 	return alias + "-1m"
 }
@@ -528,8 +528,8 @@ func ensureTemplateWithPreset(appID, providerName string, preset ProviderPreset)
 	if (appID == "claudecode" || appID == "desktop") && !preset.AnthropicNative {
 		return false, nil
 	}
-	// Codex only supports native Responses API providers; never generate
-	// proxy templates that would need protocol conversion.
+	// Codex only supports native Responses API providers; never generate a
+	// template for a provider that would require protocol conversion.
 	if appID == "codex" && !IsNativeProvider(providerName) {
 		return false, nil
 	}
@@ -628,9 +628,7 @@ func claudeTemplateStale(path, providerName string) bool {
 }
 
 // codexTemplateStale reports whether an existing Codex template predates the
-// current preset (e.g. an old model name or the legacy proxy template for
-// deepseek), in which case it should be regenerated instead of preserving
-// user edits.
+// current managed Responses passthrough contract.
 func codexTemplateStale(path, providerName string, preset ProviderPreset) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -640,17 +638,11 @@ func codexTemplateStale(path, providerName string, preset ProviderPreset) bool {
 	if err := toml.Unmarshal(data, &s); err != nil {
 		return false
 	}
-	// Native-provider templates must be native: an explicit mode = "proxy"
-	// opt-out or a legacy template without a mode but with a model_providers
-	// block are both stale and regenerated as native (the proxy no longer
-	// performs protocol conversion).
+	// Codex provider templates must use the AIX gateway. The gateway preserves
+	// the Responses protocol end to end and does not perform conversion.
 	if IsNativeProvider(providerName) {
-		if mode, _ := s["mode"].(string); mode == "proxy" {
+		if mode, _ := s["mode"].(string); mode != "proxy" {
 			return true
-		} else if _, hasMode := s["mode"]; !hasMode {
-			if _, hasProviders := s["model_providers"]; hasProviders {
-				return true
-			}
 		}
 	}
 	model, _ := s["model"].(string)

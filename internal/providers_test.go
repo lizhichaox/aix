@@ -23,7 +23,7 @@ func TestCodexTemplateStale(t *testing.T) {
 	}{
 		{
 			name:    "current preset model",
-			content: "model = \"kimi-k2.7-code\"\nmodel_provider = \"kimi\"\n",
+			content: "mode = \"proxy\"\nmodel = \"kimi-k2.7-code\"\nmodel_provider = \"kimi\"\n",
 			want:    false,
 		},
 		{
@@ -80,14 +80,21 @@ experimental_bearer_token = "aix-gateway"
 	if !codexTemplateStale(path, "deepseek", KnownProviders()["deepseek"]) {
 		t.Error("legacy proxy template without mode should be stale")
 	}
-	// Explicit proxy mode is now stale too: Codex templates must be native
-	// (the proxy no longer performs protocol conversion).
+	// Explicit proxy mode is current: the gateway passes Responses through
+	// without protocol conversion.
 	optOut := "description = \"DeepSeek via aix proxy\"\nmode = \"proxy\"\nmodel = \"deepseek-v4-pro\"\n"
 	if err := os.WriteFile(path, []byte(optOut), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if codexTemplateStale(path, "deepseek", KnownProviders()["deepseek"]) {
+		t.Error("explicit mode = \"proxy\" template should be current")
+	}
+	native := "mode = \"native\"\nmodel = \"deepseek-v4-pro\"\n"
+	if err := os.WriteFile(path, []byte(native), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if !codexTemplateStale(path, "deepseek", KnownProviders()["deepseek"]) {
-		t.Error("explicit mode = \"proxy\" template should be stale")
+		t.Error("explicit mode = \"native\" template should be stale")
 	}
 }
 
@@ -97,7 +104,7 @@ func TestCodexTemplateStaleAnyModelProvider(t *testing.T) {
 	path := filepath.Join(dir, "openrouter.toml")
 
 	// A user-chosen arbitrary model slug must be preserved, not regenerated.
-	if err := os.WriteFile(path, []byte("model = \"my/vendor-model\"\nmodel_provider = \"openrouter\"\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("mode = \"proxy\"\nmodel = \"my/vendor-model\"\nmodel_provider = \"openrouter\"\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if codexTemplateStale(path, "openrouter", preset) {
@@ -117,8 +124,8 @@ func TestEnsureProviderTemplateCreatesAndKeepsEdits(t *testing.T) {
 	// EnsureProviderTemplate writes into the real ~/.aix layout, so only
 	// verify the known-provider behavior indirectly through content helpers.
 	content := ProviderTemplateContent("codex", "deepseek", KnownProviders()["deepseek"])
-	if content == "" || !strings.Contains(content, "mode = \"native\"") {
-		t.Errorf("codex/deepseek template should be native: %q", content)
+	if content == "" || !strings.Contains(content, "mode = \"proxy\"") {
+		t.Errorf("codex/deepseek template should use the gateway: %q", content)
 	}
 	claude := ProviderTemplateContent("claudecode", "deepseek", KnownProviders()["deepseek"])
 	defaultClaude, _ := ClaudeModelFor("deepseek", DefaultClaudeUpstreamModel)
@@ -157,7 +164,7 @@ func TestCustomProviderTemplateContent(t *testing.T) {
 
 func TestProviderTemplateContentNativeUsesSpec(t *testing.T) {
 	content := ProviderTemplateContent("codex", "deepseek", KnownProviders()["deepseek"])
-	if !strings.Contains(content, "DeepSeek native Responses API (no proxy)") || !strings.Contains(content, "model = \""+DeepSeekV4VisionModel+"\"") {
-		t.Errorf("native template should use spec name/default model: %q", content)
+	if !strings.Contains(content, "DeepSeek via AIX gateway (Responses passthrough)") || !strings.Contains(content, "model = \""+DeepSeekV4VisionModel+"\"") {
+		t.Errorf("managed template should use spec name/default model: %q", content)
 	}
 }
