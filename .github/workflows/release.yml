@@ -59,6 +59,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The tag push does not check out the working tree by default. A full
+          # checkout with tags is required so `gh release create --verify-tag`
+          # and `--notes-from-tag` can resolve the annotated tag locally.
+          fetch-depth: 0
+
       - name: Download archives
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
