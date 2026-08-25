@@ -47,7 +47,7 @@ jobs:
           rm -rf "dist/${archive}"
 
       - name: Upload archive
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aix-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
