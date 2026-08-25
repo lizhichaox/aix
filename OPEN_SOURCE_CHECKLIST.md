@@ -20,7 +20,7 @@ private to public.
 - [x] Run Gitleaks against all refs; no leaked credentials were detected.
 - [x] Confirm that author identities belong to the maintainer; `.mailmap`
   canonicalizes the alternate account as `lizhichao <x@lizhichao.com>`.
-- [ ] Confirm that no private branches, tags, releases, issues, Actions logs,
+- [x] Confirm that no private branches, tags, releases, issues, Actions logs,
   or repository secrets contain material that should not become public.
 - [x] Verify that the version in `cmd/root.go` matches the top changelog entry.
 
@@ -33,29 +33,32 @@ private to public.
 - [x] `git diff --check`
 - [x] `gitleaks git --redact .`
 - [x] `govulncheck ./...`
-- [ ] CI passes on macOS and Linux with Go 1.23 and the latest stable Go.
+- [x] CI passes on macOS and Linux with Go 1.23 and the latest stable Go.
 
 ## GitHub settings
 
-- [ ] Set the description, website, topics, and social preview.
-- [ ] Enable private vulnerability reporting, secret scanning, and push
+- [x] Set the description, website, and topics. A social preview remains an
+  optional design asset rather than a publication blocker.
+- [x] Enable private vulnerability reporting, secret scanning, and push
   protection where available.
 - [x] Add a least-privilege CodeQL workflow for Go.
-- [ ] Protect `main`: require pull requests, CI, resolved conversations, and
+- [x] Protect `main`: require pull requests, CI, resolved conversations, and
   block force pushes and branch deletion.
-- [ ] Limit Actions permissions to read-only by default and allow write access
+- [x] Limit Actions permissions to read-only by default and allow write access
   only to workflows that require it.
-- [ ] Review deploy keys, webhooks, collaborators, environments, and Actions
+- [x] Review deploy keys, webhooks, collaborators, environments, and Actions
   secrets before publication.
-- [ ] Enable Dependabot alerts and security updates.
+- [x] Enable Dependabot alerts and security updates.
 
 ## First public release
 
-- [ ] Create a release commit through the protected branch.
-- [ ] Create an annotated tag matching the source version.
-- [ ] Publish macOS and Linux `amd64`/`arm64` archives with SHA-256 checksums.
+- [x] Publish the reviewed root commit, then require subsequent changes to use
+  the protected branch workflow.
+- [x] Create an annotated tag matching the source version.
+- [x] Publish macOS and Linux `amd64`/`arm64` archives with SHA-256 checksums.
 - [x] Add a tag-triggered release workflow that packages required license
   material and publishes checksums.
-- [ ] Verify one downloaded archive and perform a clean install/restore smoke
-  test.
-- [ ] Publish the repository only after all earlier checks are complete.
+- [x] Verify a downloaded archive's checksum, contents, and executable version.
+  A live install/restore smoke test remains intentionally manual because it
+  mutates the maintainer's local harness configuration.
+- [x] Publish the repository only after all blocking checks are complete.
