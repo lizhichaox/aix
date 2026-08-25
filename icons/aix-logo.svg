@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 100" width="360" height="100">
+  <rect width="360" height="100" fill="#ffffff"/>
+
+  <g transform="translate(180,48)" text-anchor="middle">
+    <!-- left chevron: > -->
+    <polygon points="-104,-14 -88,0 -104,14" fill="#000000"/>
+
+    <!-- right chevron: < -->
+    <polygon points="104,-14 88,0 104,14" fill="#000000"/>
+
+    <text y="6" font-family="Menlo, Monaco, 'Courier New', monospace" font-size="32" font-weight="700" fill="#000000">AIX</text>
+    <text y="28" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="9" font-weight="400" fill="#000000" letter-spacing="4">ALL TOKENS SQUEEZE</text>
+  </g>
+</svg>
