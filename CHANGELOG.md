@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.11.5 (2026-08-26)
+
+- Added `aix usage [provider]` for native Codex and Claude allowances plus
+  OpenCode Go subscription windows, DeepSeek balances, and OpenRouter key
+  spending. The command can query one provider or aggregate every configured
+  provider without switching, persisting, or estimating usage.
+- Added a short-lived on-disk cache for `aix usage`, defaulting to 60 seconds
+  and controlled by `--ttl`, so repeated polling returns provider-reported
+  snapshots without re-querying and avoids provider-side rate limits.
+- Made `aix usage codex` read the native ChatGPT allowance regardless of the
+  active provider, and report Claude's plan from its saved subscription login.
+
 ## v0.11.4 (2026-08-26)
 
 - Enabled Claude Desktop Auto mode for managed third-party providers, avoiding
