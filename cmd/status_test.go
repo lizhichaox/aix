@@ -77,6 +77,16 @@ func TestFormatContextLength(t *testing.T) {
 	}
 }
 
+func TestStatusJSONOmitsUnknownContextLength(t *testing.T) {
+	raw, err := json.Marshal(harnessStatus{ID: "claude", Name: "Claude", Provider: "anthropic", Mode: "native", Model: "sonnet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "context_length") {
+		t.Fatalf("unknown context_length should be omitted: %s", raw)
+	}
+}
+
 func TestAnyManagedIncludesCodexGateway(t *testing.T) {
 	if !anyManaged([]harnessStatus{{ID: internal.HarnessCodex, Provider: "opencode-go", Mode: "gateway"}}) {
 		t.Error("managed Codex must require gateway health")

@@ -250,8 +250,11 @@ func TestRequestClient(t *testing.T) {
 	}{
 		{"/v1/messages", "claude-cli/2.1.223", "claude-code"},
 		{"/v1/messages", "Mozilla/5.0 Claude/1.0 Electron/38", "claude-desktop"},
+		{"/v1/messages", "claude-cli/2.1.237 (external, claude-desktop-3p, agent-sdk/0.3.237)", "claude-code"},
+		{"/v1/messages", "Mozilla/5.0 (Macintosh) Claude/1.37937.0 Chrome/148 Electron/42.10.0", "claude-desktop"},
 		{"/v1/responses", "codex-cli/0.1", "codex-cli"},
 		{"/codex-opencode-go/v1/models", "Mozilla/5.0 ChatGPT Electron/38", "codex-desktop"},
+		{"/v1/responses", "Codex Desktop/0.149.0-alpha.4.3 (Mac OS 26.6.2; arm64) ghostty/1.3.1 (Codex Desktop; 26.818.61809)", "codex-desktop"},
 		{"/health", "curl/8.7.1", "curl"},
 		{"/health", "", "unknown-client"},
 	}
