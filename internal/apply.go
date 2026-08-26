@@ -67,6 +67,66 @@ var desktopGatewayAuthFields = []string{
 	"inferenceGatewayAuthScheme",
 }
 
+var codexManagedConfigFields = []string{
+	"model_provider",
+	"model",
+	"model_reasoning_effort",
+	"model_providers",
+	"preferred_auth_method",
+	"forced_login_method",
+	"model_catalog_json",
+}
+
+type codexNativeSnapshot struct {
+	Version       int                    `json:"version"`
+	Fields        map[string]interface{} `json:"fields"`
+	Present       map[string]bool        `json:"present"`
+	Catalog       []byte                 `json:"catalog,omitempty"`
+	CatalogExists bool                   `json:"catalog_exists"`
+}
+
+func codexNativeSnapshotPath(backupDir string) string {
+	return filepath.Join(filepath.Dir(backupDir), "codex_native.json")
+}
+
+// saveCodexNativeSnapshot preserves only the fields AIX owns while a managed
+// provider is active. Unrelated config changes made during that period remain
+// intact when native OpenAI operation is restored.
+func saveCodexNativeSnapshot(config map[string]interface{}, catalogPath, backupDir string) error {
+	provider, _ := config["model_provider"].(string)
+	if provider != "" && provider != "openai" {
+		return nil
+	}
+	path := codexNativeSnapshotPath(backupDir)
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	snap := codexNativeSnapshot{
+		Version: 1,
+		Fields:  make(map[string]interface{}),
+		Present: make(map[string]bool),
+	}
+	for _, key := range codexManagedConfigFields {
+		if value, ok := config[key]; ok {
+			snap.Fields[key] = value
+			snap.Present[key] = ok
+		}
+	}
+	if raw, err := os.ReadFile(catalogPath); err == nil {
+		snap.Catalog = raw
+		snap.CatalogExists = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	out, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writePrivateFile(path, append(out, '\n'))
+}
+
 func saveNativeDesktopSnap(config map[string]interface{}) error {
 	snap := NativeDesktopSnapPath()
 	out, err := json.MarshalIndent(config, "", "  ")
@@ -209,35 +269,53 @@ func restoreCodexNativeAt(path, catalogPath, backupDir string) error {
 	if err := backupTo(path, "native", backupDir); err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
-	// Codex desktop keys provider + model together: leaving both unset makes
-	// the host fall back to its own default, but conversation history is
-	// retagged to the openai provider and needs a concrete model id so those
-	// sessions load under the ChatGPT account. Drop third-party provider and
-	// credential fields, then pin the native provider/default model.
-	for _, key := range []string{
-		"model_providers",
-		"preferred_auth_method",
-		"forced_login_method",
-		"model_reasoning_effort",
-		"model_catalog_json",
-	} {
-		delete(existing, key)
+	snapshotPath := codexNativeSnapshotPath(backupDir)
+	var snapshot codexNativeSnapshot
+	hasSnapshot := false
+	if raw, readErr := os.ReadFile(snapshotPath); readErr == nil {
+		if err := json.Unmarshal(raw, &snapshot); err != nil {
+			return fmt.Errorf("parse native Codex snapshot: %w", err)
+		}
+		if snapshot.Version != 1 || snapshot.Fields == nil || snapshot.Present == nil {
+			return fmt.Errorf("unsupported native Codex snapshot format in %s", snapshotPath)
+		}
+		hasSnapshot = true
+		for _, key := range codexManagedConfigFields {
+			if snapshot.Present[key] {
+				existing[key] = snapshot.Fields[key]
+			} else {
+				delete(existing, key)
+			}
+		}
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("read native Codex snapshot: %w", readErr)
+	} else {
+		// Without a snapshot, retain the historical safe fallback.
+		for _, key := range codexManagedConfigFields {
+			delete(existing, key)
+		}
+		existing["model_provider"] = "openai"
+		existing["model"] = DefaultOpenAICodexModel
 	}
-	existing["model_provider"] = "openai"
-	existing["model"] = DefaultOpenAICodexModel
 	if err := backupTo(catalogPath, "native", backupDir); err != nil {
 		return fmt.Errorf("backup model catalog: %w", err)
 	}
-	// A provider's refreshed live catalog can contain arbitrary model IDs that
-	// are not present in the built-in registry. Filtering only known IDs leaves
-	// those entries behind while the provider config is removed, which puts
-	// Codex in default OpenAI mode with an unusable third-party-only picker.
-	// The catalog is a cache and has already been backed up above; removing it
-	// lets Codex rebuild its default catalog on the next launch.
-	if err := os.Remove(catalogPath); err != nil && !os.IsNotExist(err) {
+	if hasSnapshot && snapshot.CatalogExists {
+		if err := writePrivateFile(catalogPath, snapshot.Catalog); err != nil {
+			return fmt.Errorf("restore native model catalog: %w", err)
+		}
+	} else if err := os.Remove(catalogPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove model catalog: %w", err)
 	}
-	return writeTomlPrivate(path, existing)
+	if err := writeTomlPrivate(path, existing); err != nil {
+		return err
+	}
+	if hasSnapshot {
+		if err := os.Remove(snapshotPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("consume native Codex snapshot: %w", err)
+		}
+	}
+	return nil
 }
 
 func restoreExcalidrawNative() error {
@@ -757,6 +835,10 @@ func desktop3pGatewayEntry(baseURL, gatewayKey, providerID, selectedModel string
 		"inferenceGatewayAuthScheme": "x-api-key",
 		"inferenceCredentialKind":    "static",
 		"modelDiscoveryEnabled":      false,
+		// Third-party deployments default this off. Keep it enabled so a
+		// native Desktop session using Auto mode can cross the provider
+		// boundary without a warning or a persisted downgrade to Manual.
+		"autoModeEnabled": true,
 	}
 	harness, _ := HarnessProvider(HarnessClaude, providerID)
 	selected, selectedErr := ResolveHarnessSelection(HarnessClaude, providerID, selectedModel, "")

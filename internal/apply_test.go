@@ -150,6 +150,9 @@ claude-fable-5 = "deepseek-v4-pro"
 	if got := entry["inferenceGatewayApiKey"]; got != "current-gateway" {
 		t.Errorf("inferenceGatewayApiKey = %v, want current proxy gateway key", got)
 	}
+	if got := entry["autoModeEnabled"]; got != true {
+		t.Errorf("autoModeEnabled = %v, want true to preserve native Auto mode", got)
+	}
 	models, _ := entry["inferenceModels"].([]interface{})
 	if len(models) == 0 {
 		t.Fatal("inferenceModels missing")

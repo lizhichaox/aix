@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.11.4 (2026-08-26)
+
+- Enabled Claude Desktop Auto mode for managed third-party providers, avoiding
+  the warning and persisted downgrade to Manual when switching from native
+  Anthropic operation.
+- Preserved Codex's native model, reasoning effort, authentication, provider
+  definitions, and model catalog across managed provider switches and restored
+  them without overwriting unrelated configuration changes.
+- Hardened the Codex native snapshot lifecycle with first-switch retention,
+  atomic private writes, format validation, and restore-time consumption.
+
 ## v0.11.3 (2026-08-26)
 
 - Read Claude's native top-level model selection and report documented context

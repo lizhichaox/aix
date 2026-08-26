@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1236,6 +1237,102 @@ base_url = "https://api.deepseek.com"
 	}
 	if _, err := os.Stat(catalogPath); !os.IsNotExist(err) {
 		t.Errorf("model catalog should be removed on restore (stat err = %v)", err)
+	}
+}
+
+func TestCodexNativeSnapshotSurvivesManagedSwitchesAndRestoresSelection(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	catalogPath := filepath.Join(dir, "models.json")
+	backupDir := filepath.Join(dir, "backups")
+	originalCatalog := []byte(`{"models":[{"slug":"native-custom"}]}` + "\n")
+	config := `model = "gpt-5.5"
+model_provider = "openai"
+model_reasoning_effort = "xhigh"
+preferred_auth_method = "chatgpt"
+personality = "friendly"
+
+[model_providers.openai-custom]
+name = "My OpenAI"
+base_url = "https://example.invalid/v1"
+wire_api = "responses"
+`
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, originalCatalog, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	first := CodexNativeOptions{
+		ProviderID:       "deepseek",
+		APIKey:           "first-key",
+		Model:            DeepSeekV4FlashModel,
+		Effort:           "high",
+		ConfigPath:       configPath,
+		ModelCatalogPath: catalogPath,
+		BackupDir:        backupDir,
+	}
+	if err := ConfigureCodexNativeAt(first); err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := codexNativeSnapshotPath(backupDir)
+	firstSnapshot, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	managed, err := readTomlMap(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed["personality"] = "pragmatic"
+	if err := writeTomlPrivate(configPath, managed); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.ProviderID = "opencode-go"
+	second.APIKey = "second-key"
+	second.Model = "gpt-5.6-luna"
+	if err := ConfigureCodexNativeAt(second); err != nil {
+		t.Fatal(err)
+	}
+	secondSnapshot, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(firstSnapshot, secondSnapshot) {
+		t.Fatal("managed provider switch overwrote the original native snapshot")
+	}
+
+	if err := restoreCodexNativeAt(configPath, catalogPath, backupDir); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := readTomlMap(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored["model_provider"] != "openai" || restored["model"] != "gpt-5.5" {
+		t.Errorf("native selection not restored: provider=%v model=%v", restored["model_provider"], restored["model"])
+	}
+	if restored["model_reasoning_effort"] != "xhigh" {
+		t.Errorf("native effort = %v, want xhigh", restored["model_reasoning_effort"])
+	}
+	if restored["preferred_auth_method"] != "chatgpt" {
+		t.Errorf("native auth = %v, want chatgpt", restored["preferred_auth_method"])
+	}
+	if restored["personality"] != "pragmatic" {
+		t.Errorf("unrelated managed-period change was lost: personality=%v", restored["personality"])
+	}
+	providers, _ := restored["model_providers"].(map[string]interface{})
+	if _, ok := providers["openai-custom"]; !ok {
+		t.Errorf("original model provider config not restored: %#v", providers)
+	}
+	if raw, err := os.ReadFile(catalogPath); err != nil || !bytes.Equal(raw, originalCatalog) {
+		t.Errorf("native catalog not restored: %q, %v", raw, err)
+	}
+	if _, err := os.Stat(snapshotPath); !os.IsNotExist(err) {
+		t.Errorf("native snapshot should be consumed after restore: %v", err)
 	}
 }
 

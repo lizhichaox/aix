@@ -573,6 +573,9 @@ func ConfigureCodexNativeAt(opts CodexNativeOptions) error {
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
+	if err := saveCodexNativeSnapshot(config, opts.ModelCatalogPath, opts.BackupDir); err != nil {
+		return fmt.Errorf("save native Codex snapshot: %w", err)
+	}
 	providers, _ := config["model_providers"].(map[string]interface{})
 	if providers == nil {
 		providers = make(map[string]interface{})

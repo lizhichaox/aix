@@ -1,14 +1,16 @@
 # AIX
 
-AIX switches providers, models, and reasoning effort across AI harnesses.
+AIX switches providers, models, and reasoning effort across AI harnesses while
+keeping your conversations visible and ready to continue across every switch.
 
 ```bash
 aix claude opencode-go
 aix codex opencode-go
 ```
 
-AIX does not collect telemetry, token usage, or cost data. It preserves
-conversation contents when switching providers.
+AIX does not collect telemetry, token usage, or cost data. It synchronizes
+conversation history across provider changes without deleting or rewriting the
+conversation itself.
 
 The default model and effort come from the harness-specific registry at
 `~/.aix/harnesses.toml`. AIX ships with
