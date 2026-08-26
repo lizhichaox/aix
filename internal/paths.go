@@ -71,6 +71,12 @@ func CodexModelsPath() string {
 	return filepath.Join(HomeDir(), ".codex", "models.json")
 }
 
+// CodexModelsCachePath is Codex's native, server-refreshed OpenAI model
+// catalog. AIX reads it for native status only and never mutates it.
+func CodexModelsCachePath() string {
+	return filepath.Join(HomeDir(), ".codex", "models_cache.json")
+}
+
 func ClaudeDesktopConfigPath() string {
 	return filepath.Join(HomeDir(), "Library", "Application Support", "Claude", "claude_desktop_config.json")
 }

@@ -121,6 +121,53 @@ func TestCurrentHarnessModelKeepsUnknownNativeModel(t *testing.T) {
 	}
 }
 
+func TestCurrentHarnessModelReadsNativeClaudeTopLevelModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(ClaudeSettingsPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ClaudeSettingsPath(), []byte(`{"model":"sonnet"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, context := CurrentHarnessModel(HarnessClaude, "anthropic")
+	if model != "sonnet" || context != 1_000_000 {
+		t.Errorf("native Claude model/context = %q/%d, want sonnet/1000000", model, context)
+	}
+}
+
+func TestClaudeNativeModelContextUsesDocumentedFamilies(t *testing.T) {
+	cases := map[string]int{
+		"sonnet":                    1_000_000,
+		"opus":                      1_000_000,
+		"claude-sonnet-5":           1_000_000,
+		"claude-haiku-4-5-20251001": 200_000,
+		"unknown":                   0,
+	}
+	for model, want := range cases {
+		if got := claudeNativeModelContext(model); got != want {
+			t.Errorf("claudeNativeModelContext(%q) = %d, want %d", model, got, want)
+		}
+	}
+}
+
+func TestCurrentHarnessModelReadsNativeCodexCatalogContext(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(CodexConfigPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(CodexConfigPath(), []byte("model = \"gpt-5.6-sol\"\nmodel_provider = \"openai\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cache := `{"models":[{"slug":"gpt-5.6-sol","context_window":272000}]}`
+	if err := os.WriteFile(CodexModelsCachePath(), []byte(cache), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, context := CurrentHarnessModel(HarnessCodex, "openai")
+	if model != "gpt-5.6-sol" || context != 272000 {
+		t.Errorf("native Codex model/context = %q/%d, want gpt-5.6-sol/272000", model, context)
+	}
+}
+
 func TestListProvidersCodexMergesNativeProviders(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := os.MkdirAll(AppDir("codex"), 0755); err != nil {

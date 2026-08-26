@@ -24,7 +24,7 @@ type harnessStatus struct {
 	Provider string   `json:"provider"`
 	Mode     string   `json:"mode"`
 	Model    string   `json:"model,omitempty"`
-	Context  int      `json:"context_length"`
+	Context  int      `json:"context_length,omitempty"`
 	Effort   string   `json:"effort,omitempty"`
 	Choices  []string `json:"choices,omitempty"`
 }

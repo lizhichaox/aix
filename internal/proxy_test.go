@@ -231,12 +231,38 @@ func TestRequestHarness(t *testing.T) {
 		"/codex-opencode-go/v1/responses":          HarnessCodex,
 		"/codex-opencode-go/v1/responses/compact":  HarnessCodex,
 		"/codex-opencode-go/v1/responses/resp_123": HarnessCodex,
+		"/codex-opencode-go/v1/models":             HarnessCodex,
 		"/v1/chat/completions":                     "unknown",
 		"/health":                                  "unknown",
 	}
 	for path, want := range cases {
 		if got := requestHarness(path); got != want {
 			t.Errorf("requestHarness(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestRequestClient(t *testing.T) {
+	cases := []struct {
+		path string
+		ua   string
+		want string
+	}{
+		{"/v1/messages", "claude-cli/2.1.223", "claude-code"},
+		{"/v1/messages", "Mozilla/5.0 Claude/1.0 Electron/38", "claude-desktop"},
+		{"/v1/messages", "claude-cli/2.1.237 (external, claude-desktop-3p, agent-sdk/0.3.237)", "claude-code"},
+		{"/v1/messages", "Mozilla/5.0 (Macintosh) Claude/1.37937.0 Chrome/148 Electron/42.10.0", "claude-desktop"},
+		{"/v1/responses", "codex-cli/0.1", "codex-cli"},
+		{"/codex-opencode-go/v1/models", "Mozilla/5.0 ChatGPT Electron/38", "codex-desktop"},
+		{"/v1/responses", "Codex Desktop/0.149.0-alpha.4.3 (Mac OS 26.6.2; arm64) ghostty/1.3.1 (Codex Desktop; 26.818.61809)", "codex-desktop"},
+		{"/health", "curl/8.7.1", "curl"},
+		{"/health", "", "unknown-client"},
+	}
+	for _, tc := range cases {
+		r, _ := http.NewRequest("GET", tc.path, nil)
+		r.Header.Set("User-Agent", tc.ua)
+		if got := requestClient(r, requestHarness(tc.path)); got != tc.want {
+			t.Errorf("requestClient(%q, %q) = %q, want %q", tc.path, tc.ua, got, tc.want)
 		}
 	}
 }
@@ -405,7 +431,7 @@ func TestHandleModels_StableOrder(t *testing.T) {
 
 	w := newMockResponseWriter()
 	r, _ := http.NewRequest("GET", "/v1/models", nil)
-	ps.handleModels(w, r)
+	ps.handleModels(w, r, requestHarness(r.URL.Path), requestClient(r, requestHarness(r.URL.Path)))
 
 	if w.statusCode != http.StatusOK && w.statusCode != 0 {
 		t.Fatalf("status = %d, want 200", w.statusCode)
@@ -606,7 +632,7 @@ func TestRewriteModel(t *testing.T) {
 	ps := NewProxyServer(cfg)
 
 	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}`)
-	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"])
+	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"], "unknown")
 	if !bytes.Contains(rewritten, []byte(`"deepseek-v4-pro"`)) {
 		t.Errorf("model not rewritten, body=%s", rewritten)
 	}
@@ -622,7 +648,7 @@ func TestRewriteModel_NoMatch(t *testing.T) {
 	ps := NewProxyServer(cfg)
 
 	body := []byte(`{"model":"unknown-model","messages":[]}`)
-	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"])
+	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"], "unknown")
 	if !bytes.Contains(rewritten, []byte(`"unknown-model"`)) {
 		t.Errorf("model should be unchanged, body=%s", rewritten)
 	}
@@ -638,7 +664,7 @@ func TestRewriteModel_OneMillionSuffix(t *testing.T) {
 	ps := NewProxyServer(cfg)
 
 	body := []byte(`{"model":"claude-opus-5[1m]","messages":[{"role":"user","content":"hi"}]}`)
-	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"])
+	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"], "unknown")
 	if !bytes.Contains(rewritten, []byte(`"deepseek-v4-flash"`)) {
 		t.Errorf("1M variant should normalize to the base mapping, body=%s", rewritten)
 	}
@@ -657,7 +683,7 @@ func TestRewriteModel_OneMillionSuffix_ExplicitMappingWins(t *testing.T) {
 	ps := NewProxyServer(cfg)
 
 	body := []byte(`{"model":"claude-opus-5[1m]","messages":[]}`)
-	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"])
+	rewritten := ps.rewriteModel(body, cfg.Providers["deepseek"], "unknown")
 	if !bytes.Contains(rewritten, []byte(`"deepseek-v4-pro"`)) {
 		t.Errorf("explicit [1m] mapping should win over suffix normalization, body=%s", rewritten)
 	}
@@ -666,7 +692,7 @@ func TestRewriteModel_OneMillionSuffix_ExplicitMappingWins(t *testing.T) {
 func TestRewriteModel_EmptyBody(t *testing.T) {
 	ps := NewProxyServer(DefaultProxyConfig())
 	p := &ProviderConfig{Models: map[string]string{"a": "b"}}
-	rewritten := ps.rewriteModel([]byte{}, p)
+	rewritten := ps.rewriteModel([]byte{}, p, "unknown")
 	if len(rewritten) != 0 {
 		t.Errorf("empty body should stay empty, got %s", rewritten)
 	}
@@ -676,7 +702,7 @@ func TestRewriteModel_NoModels(t *testing.T) {
 	ps := NewProxyServer(DefaultProxyConfig())
 	p := &ProviderConfig{}
 	body := []byte(`{"model":"test"}`)
-	rewritten := ps.rewriteModel(body, p)
+	rewritten := ps.rewriteModel(body, p, "unknown")
 	if !bytes.Contains(rewritten, []byte(`"test"`)) {
 		t.Errorf("body unchanged when provider has no models")
 	}
@@ -696,7 +722,7 @@ func TestRewriteModel_IdentityMappingLogsNothing(t *testing.T) {
 	defer log.SetOutput(os.Stderr)
 
 	body := []byte(`{"model":"deepseek-v4-flash-vision-exp","messages":[]}`)
-	rewritten := ps.rewriteModel(body, cfg.Providers["opencode-go"])
+	rewritten := ps.rewriteModel(body, cfg.Providers["opencode-go"], HarnessCodex)
 	if !bytes.Contains(rewritten, []byte(`"deepseek-v4-flash-vision-exp"`)) {
 		t.Errorf("identity mapping should keep the model, body=%s", rewritten)
 	}
@@ -719,8 +745,8 @@ func TestRewriteModel_RealRewriteLogs(t *testing.T) {
 	defer log.SetOutput(os.Stderr)
 
 	body := []byte(`{"model":"gpt-5.5","messages":[]}`)
-	_ = ps.rewriteModel(body, cfg.Providers["deepseek"])
-	if !strings.Contains(buf.String(), "model: gpt-5.5 → deepseek-v4-pro") {
+	_ = ps.rewriteModel(body, cfg.Providers["deepseek"], HarnessCodex)
+	if !strings.Contains(buf.String(), "[codex] [aix-proxy] model: gpt-5.5 → deepseek-v4-pro") {
 		t.Errorf("real rewrite should log the mapping, got: %s", buf.String())
 	}
 }
@@ -948,7 +974,7 @@ func TestHandleModels_ModelNames(t *testing.T) {
 
 	w := newMockResponseWriter()
 	r, _ := http.NewRequest("GET", "/v1/models", nil)
-	ps.handleModels(w, r)
+	ps.handleModels(w, r, requestHarness(r.URL.Path), requestClient(r, requestHarness(r.URL.Path)))
 
 	var resp struct {
 		Data []struct {
@@ -984,7 +1010,7 @@ func TestHandleModelsForProvider_ModelNamesFallback(t *testing.T) {
 
 	w := newMockResponseWriter()
 	r, _ := http.NewRequest("GET", "/custom/v1/models", nil)
-	ps.handleModelsForProvider(w, r, cfg.Providers["custom"])
+	ps.handleModelsForProvider(w, r, cfg.Providers["custom"], requestHarness(r.URL.Path), requestClient(r, requestHarness(r.URL.Path)))
 
 	var resp struct {
 		Data []struct {
