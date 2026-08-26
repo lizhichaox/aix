@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "0.11.1"
+var Version = "0.11.2"
 
 var rootCmd = &cobra.Command{
 	Use:   "aix",

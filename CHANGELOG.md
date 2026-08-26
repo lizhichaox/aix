@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.11.2 (2026-08-26)
+
+- Recorded successful provider/model/effort switches in the gateway log so
+  route changes are visible before the first request uses them.
+- Moved the public harness identity to a prominent `[claude]` or `[codex]`
+  prefix on request, routing, model-rewrite, response, and request-error logs.
+- Added best-effort client classification for Claude Code, Claude Desktop,
+  Codex CLI, and Codex Desktop while keeping ambiguous traffic explicit.
+
 ## v0.11.1 (2026-08-25)
 
 - Preserved Codex conversation-history lineage: paginated rollouts are kept
