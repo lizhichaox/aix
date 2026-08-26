@@ -49,6 +49,13 @@ func ClaudeSettingsPath() string {
 	return filepath.Join(HomeDir(), ".claude", "settings.json")
 }
 
+// ClaudeConfigJSONPath returns Claude Code/Desktop's primary config file.
+// Claude 2.x persists the active per-session model here (in
+// clientDataCacheSlots) rather than in settings.json.
+func ClaudeConfigJSONPath() string {
+	return filepath.Join(HomeDir(), ".claude.json")
+}
+
 // HarnessRegistryPath is the user-editable provider/model/effort mapping
 // layered over AIX's bundled harness defaults.
 func HarnessRegistryPath() string {

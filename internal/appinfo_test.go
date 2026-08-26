@@ -135,6 +135,62 @@ func TestCurrentHarnessModelReadsNativeClaudeTopLevelModel(t *testing.T) {
 	}
 }
 
+func TestActiveClaudeModelPicksMostRecentSlot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(ClaudeConfigJSONPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{
+  "clientDataCacheSlots": {
+    "bi1-older": {"model": "claude-sonnet-5", "at": 1000},
+    "bi1-newest": {"model": "claude-opus-5", "at": 2000}
+  }
+}`
+	if err := os.WriteFile(ClaudeConfigJSONPath(), []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, ok := activeClaudeModel()
+	if !ok || model != "claude-opus-5" {
+		t.Errorf("activeClaudeModel = %q/%v, want claude-opus-5/true", model, ok)
+	}
+}
+
+func TestCurrentHarnessModelPrefersActiveClaudeSlot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(ClaudeSettingsPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ClaudeSettingsPath(), []byte(`{"model":"sonnet"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := `{
+  "clientDataCacheSlots": {
+    "bi1-slot": {"model": "claude-opus-5", "at": 2000}
+  }
+}`
+	if err := os.WriteFile(ClaudeConfigJSONPath(), []byte(cfg), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, context := CurrentHarnessModel(HarnessClaude, "anthropic")
+	if model != "claude-opus-5" || context != 1_000_000 {
+		t.Errorf("native Claude model/context = %q/%d, want claude-opus-5/1000000", model, context)
+	}
+}
+
+func TestCurrentHarnessModelFallsBackWhenNoActiveClaudeSlot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := os.MkdirAll(filepath.Dir(ClaudeSettingsPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ClaudeSettingsPath(), []byte(`{"model":"opus"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	model, context := CurrentHarnessModel(HarnessClaude, "anthropic")
+	if model != "opus" || context != 1_000_000 {
+		t.Errorf("native Claude model/context = %q/%d, want opus/1000000", model, context)
+	}
+}
+
 func TestClaudeNativeModelContextUsesDocumentedFamilies(t *testing.T) {
 	cases := map[string]int{
 		"sonnet":                    1_000_000,

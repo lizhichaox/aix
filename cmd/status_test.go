@@ -67,7 +67,9 @@ func TestFormatContextLength(t *testing.T) {
 	cases := map[int]string{
 		0:       "unknown",
 		1048576: "1M",
+		1000000: "1M",
 		262144:  "256K",
+		200000:  "200K",
 		12345:   "12345",
 	}
 	for context, want := range cases {

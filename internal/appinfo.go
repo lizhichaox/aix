@@ -184,6 +184,11 @@ func CurrentHarnessModel(harnessID, providerID string) (string, int) {
 		}
 	}
 	model = strings.TrimSpace(model)
+	if harnessID == HarnessClaude && providerID == "anthropic" {
+		if active, ok := activeClaudeModel(); ok {
+			model = active
+		}
+	}
 	if providerID != "" && providerID != "-" && providerID != "anthropic" && providerID != "openai" {
 		selection, err := ResolveHarnessSelection(harnessID, providerID, model, "")
 		if err == nil {
@@ -197,6 +202,68 @@ func CurrentHarnessModel(harnessID, providerID string) (string, int) {
 		return strings.TrimSuffix(model, "[1m]"), claudeNativeModelContext(model)
 	}
 	return strings.TrimSuffix(model, "[1m]"), 0
+}
+
+// activeClaudeModel returns the most recently updated model that Claude
+// records in ~/.claude.json. Claude 2.x persists the active model per session
+// in clientDataCacheSlots instead of settings.json, so status reads this live
+// value and falls back to settings.json when it is unavailable.
+func activeClaudeModel() (string, bool) {
+	raw, err := os.ReadFile(ClaudeConfigJSONPath())
+	if err != nil {
+		return "", false
+	}
+	var cfg struct {
+		ClientDataCacheSlots map[string]struct {
+			Model string          `json:"model"`
+			At    json.RawMessage `json:"at"`
+		} `json:"clientDataCacheSlots"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", false
+	}
+	best := ""
+	bestKey := ""
+	var bestAt int64
+	for key, slot := range cfg.ClientDataCacheSlots {
+		model := strings.TrimSpace(slot.Model)
+		if model == "" {
+			continue
+		}
+		at := parseEpochMillis(slot.At)
+		if bestKey == "" || at > bestAt || (at == bestAt && key > bestKey) {
+			best = model
+			bestKey = key
+			bestAt = at
+		}
+	}
+	return best, bestKey != ""
+}
+
+// parseEpochMillis reads a numeric or string epoch timestamp from JSON and
+// returns it in milliseconds. Only relative ordering matters here, so a
+// missing or malformed value collapses to zero.
+func parseEpochMillis(raw json.RawMessage) int64 {
+	if len(raw) == 0 {
+		return 0
+	}
+	var n int64
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		var v int64
+		if _, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &v); err == nil {
+			return v
+		}
+		return 0
+	}
+	var f float64
+	if err := json.Unmarshal(raw, &f); err == nil {
+		return int64(f)
+	}
+	return 0
 }
 
 // claudeNativeModelContext supplies the documented context window for

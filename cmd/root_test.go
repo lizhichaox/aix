@@ -40,6 +40,30 @@ func TestRootHelpStaysUnderFiftyLines(t *testing.T) {
 	}
 }
 
+func TestVersionOutputDescribesPurposeAndCommands(t *testing.T) {
+	var out bytes.Buffer
+	rootCmd.SetOut(&out)
+	defer rootCmd.SetOut(nil)
+	rootCmd.SetArgs([]string{"--version"})
+	defer rootCmd.SetArgs(nil)
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"AIX v",
+		"Switch AI providers, models, and reasoning effort across AI harnesses while",
+		"keeping your conversations ready to continue across every switch.",
+		"aix status",
+		"aix claude <provider> [model] [effort]",
+		"aix codex <provider> [model] [effort]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("version output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestPublicCommandSurface(t *testing.T) {
 	if got, want := commandNames(rootCmd), []string{"claude", "codex", "log", "setup", "status", "usage"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root commands = %v, want %v", got, want)
