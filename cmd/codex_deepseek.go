@@ -102,6 +102,9 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 	if err := ensureAIXGateway(); err != nil {
 		return err
 	}
+	if err := internal.AppendSwitchLog(internal.HarnessCodex, spec.ID, selection.ClientModel, selection.Effort); err != nil {
+		fmt.Printf("  ⚠ switch log not written: %v\n", err)
+	}
 	fmt.Printf("✓ Codex → %s, effort %s (%s Responses API via AIX gateway", selection.ClientModel, selection.Effort, spec.Name)
 	if keySource != "" {
 		fmt.Printf("; key from %s", keySource)
