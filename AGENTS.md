@@ -25,8 +25,12 @@ and TOML. The current release version is defined in `cmd/root.go`.
   require an explicit private provider prefix.
 - Claude switches are atomic across Code and Desktop. Codex switches remain
   independent.
-- AIX does not collect, persist, estimate, or display token usage or cost.
-  Usage accounting belongs to the harness or provider.
+- AIX does not collect or estimate token usage or cost. The on-demand
+  `aix usage [provider]` command displays native subscription allowance and
+  reset times reported directly by the native provider. It may cache
+  provider-reported snapshots briefly to avoid provider rate limits; the cache
+  stores only provider-reported values and no credentials or AIX-computed
+  usage totals.
 - Do not add closed-source client integrations or mutate client session files.
 
 All code comments, documentation, commit messages, and CLI output must be in
@@ -174,7 +178,7 @@ registry-driven.
 ## Command surface
 
 - Public root commands are limited to `claude`, `codex`, `setup`, `status`,
-  and `log`.
+  `usage`, and `log`.
 - Claude and Codex expose only `restore` and `restart` subcommands.
 - Both harnesses expose only `--list`, `--edit`, `--doctor`, and `--effort`.
 - Keep root help below 50 lines. Do not add compatibility aliases or public

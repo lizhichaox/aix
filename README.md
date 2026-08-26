@@ -8,7 +8,12 @@ aix claude opencode-go
 aix codex opencode-go
 ```
 
-AIX does not collect telemetry, token usage, or cost data. It synchronizes
+AIX does not collect telemetry or estimate token usage or cost data. The
+on-demand `aix usage` command displays native subscription allowance and
+supported provider balances reported directly by OpenAI or Anthropic. Fresh
+results are cached briefly so aggressive polling does not trigger provider
+rate limits; the cache stores only provider-reported snapshots, never
+credentials or an AIX-computed usage total. AIX synchronizes
 conversation history across provider changes without deleting or rewriting the
 conversation itself.
 
@@ -55,6 +60,7 @@ file permissions.
 
 ```text
 aix
+├── usage [provider]
 ├── claude [provider] [model] [effort]
 │   ├── restore
 │   └── restart
@@ -101,6 +107,17 @@ aix codex opencode-go --doctor
 # Restore native APIs
 aix claude restore
 aix codex restore
+
+# Check every configured provider, or one provider
+aix usage
+aix usage codex
+aix usage claude
+aix usage opencode-go
+aix usage deepseek
+aix usage openrouter
+
+# Cache results for 60s by default; query live each time with:
+aix usage --ttl 0
 ```
 
 ## Harness registry

@@ -33,7 +33,7 @@ func TestRootHelpStaysUnderFiftyLines(t *testing.T) {
 	if lines > 50 {
 		t.Fatalf("root help has %d lines, want at most 50:\n%s", lines, out.String())
 	}
-	for _, removed := range []string{"proxy", "provider", "usage", "web", "dsh", "completion", "self-install"} {
+	for _, removed := range []string{"proxy", "provider", "web", "dsh", "completion", "self-install"} {
 		if strings.Contains(out.String(), "  "+removed+" ") {
 			t.Errorf("root help still exposes removed command %q", removed)
 		}
@@ -41,7 +41,7 @@ func TestRootHelpStaysUnderFiftyLines(t *testing.T) {
 }
 
 func TestPublicCommandSurface(t *testing.T) {
-	if got, want := commandNames(rootCmd), []string{"claude", "codex", "log", "setup", "status"}; !reflect.DeepEqual(got, want) {
+	if got, want := commandNames(rootCmd), []string{"claude", "codex", "log", "setup", "status", "usage"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root commands = %v, want %v", got, want)
 	}
 	if got, want := commandNames(claudeCmd), []string{"restart", "restore"}; !reflect.DeepEqual(got, want) {
