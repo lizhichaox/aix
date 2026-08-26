@@ -157,13 +157,20 @@ func formatContextLength(context int) string {
 	}
 	const mebibyte = 1024 * 1024
 	const kibibyte = 1024
-	if context%mebibyte == 0 {
+	const million = 1_000_000
+	const thousand = 1_000
+	switch {
+	case context%mebibyte == 0:
 		return fmt.Sprintf("%dM", context/mebibyte)
-	}
-	if context%kibibyte == 0 {
+	case context >= million:
+		return fmt.Sprintf("%dM", context/million)
+	case context%kibibyte == 0:
 		return fmt.Sprintf("%dK", context/kibibyte)
+	case context >= thousand && context%thousand == 0:
+		return fmt.Sprintf("%dK", context/thousand)
+	default:
+		return fmt.Sprintf("%d", context)
 	}
-	return fmt.Sprintf("%d", context)
 }
 
 func providerChoices(appID, current string) []string {

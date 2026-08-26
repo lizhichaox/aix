@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.11.6 (2026-08-26)
+
+- `aix -v` now prints a one-line purpose summary and the common commands next to
+  the version, and the description highlights that conversations stay ready to
+  continue across provider switches.
+- Claude status now reads the active model that Claude 2.x records in
+  `~/.claude.json` (`clientDataCacheSlots`) so `aix status` reports the model
+  actually in use instead of a stale `settings.json` default; it still falls
+  back to `settings.json` when no active slot is available.
+- The status table formats context lengths consistently (values of at least
+  one million render as `1M`, including Claude, and known values such as
+  200K render as `200K`) while `--json` keeps the exact token counts.
+
 ## v0.11.5 (2026-08-26)
 
 - Added `aix usage [provider]` for native Codex and Claude allowances plus

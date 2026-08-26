@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "0.11.5"
+var Version = "0.11.6"
 
 var rootCmd = &cobra.Command{
 	Use:   "aix",
@@ -42,6 +42,18 @@ func Execute() {
 func init() {
 	internal.ProxyVersion = Version
 	rootCmd.Version = Version
-	rootCmd.SetVersionTemplate("AIX v{{.Version}}\n")
+	rootCmd.SetVersionTemplate(`AIX v{{.Version}}
+
+Switch AI providers, models, and reasoning effort across AI harnesses while
+keeping your conversations ready to continue across every switch.
+
+Common commands:
+  aix setup
+  aix status
+  aix claude <provider> [model] [effort]
+  aix codex <provider> [model] [effort]
+  aix usage [provider]
+  aix log
+`)
 	rootCmd.CompletionOptions.DisableDefaultCmd = true
 }
