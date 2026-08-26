@@ -301,7 +301,7 @@ func requestClient(r *http.Request, harness string) string {
 		}
 		return "claude-desktop"
 	case HarnessCodex:
-		if strings.Contains(ua, "electron") || strings.Contains(ua, "chatgpt") {
+		if strings.Contains(ua, "codex desktop") || strings.Contains(ua, "electron") || strings.Contains(ua, "chatgpt") {
 			return "codex-desktop"
 		}
 		if strings.Contains(ua, "codex") {

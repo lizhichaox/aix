@@ -166,6 +166,12 @@ func CurrentHarnessModel(harnessID, providerID string) (string, int) {
 			if json.Unmarshal(data, &settings) == nil {
 				env, _ := settings["env"].(map[string]interface{})
 				model, _ = env["ANTHROPIC_DEFAULT_SONNET_MODEL"].(string)
+				if strings.TrimSpace(model) == "" {
+					// Native Claude stores its active family/model at the top
+					// level (commonly "sonnet", "opus", or "haiku"). Managed
+					// providers keep using the explicit environment mapping above.
+					model, _ = settings["model"].(string)
+				}
 			}
 		}
 	case HarnessCodex:
@@ -184,7 +190,60 @@ func CurrentHarnessModel(harnessID, providerID string) (string, int) {
 			return selection.UpstreamModel, selection.ContextWindow
 		}
 	}
+	if harnessID == HarnessCodex && providerID == "openai" {
+		return model, codexNativeModelContext(model)
+	}
+	if harnessID == HarnessClaude && providerID == "anthropic" {
+		return strings.TrimSuffix(model, "[1m]"), claudeNativeModelContext(model)
+	}
 	return strings.TrimSuffix(model, "[1m]"), 0
+}
+
+// claudeNativeModelContext supplies the documented context window for
+// Anthropic's native rolling family aliases and current model IDs. Unlike
+// Codex, Claude does not persist a local model catalog, so this deliberately
+// narrow fallback avoids guessing for unknown or legacy model names.
+func claudeNativeModelContext(model string) int {
+	model = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(model), "[1m]"))
+	switch model {
+	case "sonnet", "opus", "fable", "mythos",
+		"claude-sonnet-5", "claude-sonnet-4-6",
+		"claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+		"claude-fable-5", "claude-mythos-5":
+		return 1_000_000
+	case "haiku", "claude-haiku-4-5", "claude-haiku-4-5-20251001":
+		return 200_000
+	default:
+		return 0
+	}
+}
+
+// codexNativeModelContext reads Codex's own server-refreshed model catalog.
+// The cache remains authoritative for OpenAI-native models so AIX does not
+// need to hard-code model metadata that can change between Codex releases.
+func codexNativeModelContext(model string) int {
+	if strings.TrimSpace(model) == "" {
+		return 0
+	}
+	raw, err := os.ReadFile(CodexModelsCachePath())
+	if err != nil {
+		return 0
+	}
+	var catalog struct {
+		Models []struct {
+			Slug          string `json:"slug"`
+			ContextWindow int    `json:"context_window"`
+		} `json:"models"`
+	}
+	if json.Unmarshal(raw, &catalog) != nil {
+		return 0
+	}
+	for _, entry := range catalog.Models {
+		if entry.Slug == model {
+			return entry.ContextWindow
+		}
+	}
+	return 0
 }
 
 // isLocalProxyURL reports whether u points at the local AIX proxy listener
