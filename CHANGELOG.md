@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.11.3 (2026-08-26)
+
+- Read Claude's native top-level model selection and report documented context
+  windows for current Anthropic family aliases.
+- Read native Codex context windows from its server-refreshed model cache
+  instead of reporting zero, and omit unknown JSON context values.
+- Correctly distinguish real Codex Desktop user agents from Codex CLI traffic
+  and add real-world Claude Desktop/Code client-classification coverage.
+
+## v0.11.2 (2026-08-26)
+
+- Recorded successful provider/model/effort switches in the gateway log so
+  route changes are visible before the first request uses them.
+- Moved the public harness identity to a prominent `[claude]` or `[codex]`
+  prefix on request, routing, model-rewrite, response, and request-error logs.
+- Added best-effort client classification for Claude Code, Claude Desktop,
+  Codex CLI, and Codex Desktop while keeping ambiguous traffic explicit.
+
 ## v0.11.1 (2026-08-25)
 
 - Preserved Codex conversation-history lineage: paginated rollouts are kept

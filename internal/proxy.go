@@ -275,10 +275,49 @@ func requestHarness(path string) string {
 	if strings.Contains(path, "/v1/messages") {
 		return HarnessClaude
 	}
-	if isResponsesPath(path) {
+	if isResponsesPath(path) || hasRoutePrefix(path, "codex-") {
 		return HarnessCodex
 	}
 	return "unknown"
+}
+
+func hasRoutePrefix(path, prefix string) bool {
+	first := strings.TrimPrefix(path, "/")
+	if slash := strings.IndexByte(first, '/'); slash >= 0 {
+		first = first[:slash]
+	}
+	return strings.HasPrefix(first, prefix)
+}
+
+// requestClient reports only identities that the HTTP request itself can
+// support. It deliberately avoids per-request process inspection, which is
+// platform-specific and races with short-lived localhost connections.
+func requestClient(r *http.Request, harness string) string {
+	ua := strings.ToLower(strings.TrimSpace(r.UserAgent()))
+	switch harness {
+	case HarnessClaude:
+		if isClaudeCodeRequest(r) {
+			return "claude-code"
+		}
+		return "claude-desktop"
+	case HarnessCodex:
+		if strings.Contains(ua, "codex desktop") || strings.Contains(ua, "electron") || strings.Contains(ua, "chatgpt") {
+			return "codex-desktop"
+		}
+		if strings.Contains(ua, "codex") {
+			return "codex-cli"
+		}
+		return "codex-client"
+	default:
+		switch {
+		case strings.HasPrefix(ua, "curl/"):
+			return "curl"
+		case strings.HasPrefix(ua, "go-http-client/"):
+			return "go-http-client"
+		default:
+			return "unknown-client"
+		}
+	}
 }
 
 func isLocalAddr(addr string) bool {
@@ -290,8 +329,10 @@ func isLocalAddr(addr string) bool {
 }
 
 func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[aix-proxy] incoming: harness=%s method=%s path=%s | x-api-key=%s Authorization=%s ua=%s",
-		requestHarness(r.URL.Path), r.Method, r.URL.Path,
+	harness := requestHarness(r.URL.Path)
+	client := requestClient(r, harness)
+	log.Printf("[%s] [aix-proxy] incoming: client=%s method=%s path=%s | x-api-key=%s Authorization=%s ua=%s",
+		harness, client, r.Method, r.URL.Path,
 		MaskHeader(r.Header.Get("x-api-key")),
 		MaskHeader(r.Header.Get("Authorization")),
 		r.UserAgent())
@@ -358,9 +399,9 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/v1/models" || strings.HasSuffix(r.URL.Path, "/v1/models") {
 		if explicitProvider != nil {
-			ps.handleModelsForProvider(w, r, explicitProvider)
+			ps.handleModelsForProvider(w, r, explicitProvider, harness, client)
 		} else {
-			ps.handleModels(w, r)
+			ps.handleModels(w, r, harness, client)
 		}
 		return
 	}
@@ -369,7 +410,7 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 50*1024*1024))
 	r.Body.Close()
 	if err != nil {
-		log.Printf("[aix-proxy] ERROR: read request body: %v", err)
+		log.Printf("[%s] [aix-proxy] ERROR: read request body: %v", harness, err)
 		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
 		return
 	}
@@ -403,7 +444,7 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rewrite model in the pre-read body bytes.
-	bodyBytes = ps.rewriteModel(bodyBytes, provider)
+	bodyBytes = ps.rewriteModel(bodyBytes, provider, harness)
 	// Pin the reasoning effort to the configured value for Codex Responses
 	// routes. The desktop client sends its own per-request effort (commonly
 	// defaulting to medium), which can drift from the configured
@@ -420,13 +461,13 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if publicProvider == "" {
 		publicProvider = provider.Name
 	}
-	harness := requestHarness(r.URL.Path)
-	log.Printf("[aix-proxy] route: harness=%s provider=%s model=%s effort=%s method=%s path=%s",
-		harness, logValue(publicProvider), logValue(routedModel), logValue(routedEffort), r.Method, r.URL.Path)
+	harness = requestHarness(r.URL.Path)
+	log.Printf("[%s] [aix-proxy] route: client=%s provider=%s model=%s effort=%s method=%s path=%s",
+		harness, client, logValue(publicProvider), logValue(routedModel), logValue(routedEffort), r.Method, r.URL.Path)
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, upstreamURL, bytes.NewReader(bodyBytes))
 	if err != nil {
-		log.Printf("[aix-proxy] upstream error: %v", err)
+		log.Printf("[%s] [aix-proxy] upstream error: %v", harness, err)
 		http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError)
 		return
 	}
@@ -444,14 +485,14 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := ps.client.Do(req)
 	if err != nil {
-		log.Printf("[aix-proxy] upstream error: %v", err)
+		log.Printf("[%s] [aix-proxy] upstream error: %v", harness, err)
 		http.Error(w, `{"error":"upstream request failed"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	log.Printf("[aix-proxy] response: harness=%s provider=%s model=%s effort=%s status=%d",
-		harness, logValue(publicProvider), logValue(routedModel), logValue(routedEffort), resp.StatusCode)
+	log.Printf("[%s] [aix-proxy] response: client=%s provider=%s model=%s effort=%s status=%d",
+		harness, client, logValue(publicProvider), logValue(routedModel), logValue(routedEffort), resp.StatusCode)
 
 	for k, vs := range resp.Header {
 		for _, v := range vs {
@@ -463,7 +504,7 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if isStreaming(resp) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
-			log.Printf("[aix-proxy] WARNING: streaming without http.Flusher for %s %s", r.Method, r.URL.Path)
+			log.Printf("[%s] [aix-proxy] WARNING: streaming without http.Flusher for %s %s", harness, r.Method, r.URL.Path)
 		}
 		var total int64
 		buf := make([]byte, 4096)
@@ -471,7 +512,7 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				if _, werr := w.Write(buf[:n]); werr != nil {
-					log.Printf("[aix-proxy] ERROR: streaming write failed after %d bytes: %v", total, werr)
+					log.Printf("[%s] [aix-proxy] ERROR: streaming write failed after %d bytes: %v", harness, total, werr)
 					break
 				}
 				total += int64(n)
@@ -480,7 +521,7 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if total >= maxProxyResponseBytes {
-				log.Printf("[aix-proxy] WARNING: streaming response truncated at %d bytes (limit reached)", maxProxyResponseBytes)
+				log.Printf("[%s] [aix-proxy] WARNING: streaming response truncated at %d bytes (limit reached)", harness, maxProxyResponseBytes)
 				break
 			}
 			if err != nil {
@@ -490,10 +531,10 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	} else {
 		respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxProxyResponseBytes))
 		if err != nil {
-			log.Printf("[aix-proxy] read upstream body error: %v", err)
+			log.Printf("[%s] [aix-proxy] read upstream body error: %v", harness, err)
 		}
 		if _, werr := w.Write(respBody); werr != nil {
-			log.Printf("[aix-proxy] write response error: %v", werr)
+			log.Printf("[%s] [aix-proxy] write response error: %v", harness, werr)
 		}
 	}
 }
@@ -722,7 +763,7 @@ func applyProviderHeaders(req *http.Request, provider *ProviderConfig) {
 	}
 }
 
-func (ps *ProxyServer) rewriteModel(body []byte, provider *ProviderConfig) []byte {
+func (ps *ProxyServer) rewriteModel(body []byte, provider *ProviderConfig, harness string) []byte {
 	if len(provider.Models) == 0 || len(body) == 0 {
 		return body
 	}
@@ -752,7 +793,7 @@ func (ps *ProxyServer) rewriteModel(body []byte, provider *ProviderConfig) []byt
 				// providers whose client model already matches upstream) are
 				// pure noise.
 				if model != mapped {
-					log.Printf("[aix-proxy] model: %s → %s", model, mapped)
+					log.Printf("[%s] [aix-proxy] model: %s → %s", harness, model, mapped)
 				}
 			}
 		}
@@ -771,7 +812,7 @@ func isStreaming(resp *http.Response) bool {
 		strings.Contains(ct, "application/x-ndjson")
 }
 
-func (ps *ProxyServer) handleModels(w http.ResponseWriter, r *http.Request) {
+func (ps *ProxyServer) handleModels(w http.ResponseWriter, r *http.Request, harness, client string) {
 	seen := make(map[string]bool)
 	var models []modelEntry
 
@@ -797,10 +838,10 @@ func (ps *ProxyServer) handleModels(w http.ResponseWriter, r *http.Request) {
 	resp := modelsResponse{Data: models, HasMore: false}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-	log.Printf("[aix-proxy] /v1/models → %d models", len(models))
+	log.Printf("[%s] [aix-proxy] /v1/models: client=%s models=%d", harness, client, len(models))
 }
 
-func (ps *ProxyServer) handleModelsForProvider(w http.ResponseWriter, r *http.Request, provider *ProviderConfig) {
+func (ps *ProxyServer) handleModelsForProvider(w http.ResponseWriter, r *http.Request, provider *ProviderConfig, harness, client string) {
 	var models []modelEntry
 	srcModels := make([]string, 0, len(provider.Models))
 	for srcModel := range provider.Models {
@@ -818,7 +859,7 @@ func (ps *ProxyServer) handleModelsForProvider(w http.ResponseWriter, r *http.Re
 	resp := modelsResponse{Data: models, HasMore: false}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
-	log.Printf("[aix-proxy] /v1/models (%s) → %d models", provider.Name, len(models))
+	log.Printf("[%s] [aix-proxy] /v1/models: client=%s provider=%s models=%d", harness, client, provider.Name, len(models))
 }
 
 // providerDisplayNameFor returns the display name for a source model: the

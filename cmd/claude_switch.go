@@ -247,6 +247,17 @@ func switchClaudeProvider(provider, model, effort string) error {
 	if err := ensureAIXGateway(); err != nil {
 		return err
 	}
+	logModel := selection.ClientModel
+	logEffort := selection.Effort
+	if logModel == "" {
+		logModel, _ = internal.CurrentHarnessModel(internal.HarnessClaude, provider)
+	}
+	if logEffort == "" {
+		logEffort = internal.CurrentHarnessEffort(internal.HarnessClaude)
+	}
+	if err := internal.AppendSwitchLog(internal.HarnessClaude, provider, logModel, logEffort); err != nil {
+		fmt.Printf("  ⚠ switch log not written: %v\n", err)
+	}
 	fmt.Printf("✓ Claude Code + Claude Desktop → %s", provider)
 	if model != "" {
 		fmt.Printf(" (model: %s)", model)
