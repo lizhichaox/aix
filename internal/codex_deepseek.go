@@ -553,7 +553,7 @@ func ConfigureCodexNativeAt(opts CodexNativeOptions) error {
 	model := selection.ClientModel
 	harness, ok := HarnessProvider(HarnessCodex, opts.ProviderID)
 	if !ok {
-		return fmt.Errorf("provider %q has no Codex harness mapping in %s", opts.ProviderID, HarnessRegistryPath())
+		return fmt.Errorf("provider %q has no Codex harness mapping in %s", opts.ProviderID, HarnessRegistryPath(HarnessCodex))
 	}
 	if strings.TrimSpace(opts.APIKey) == "" {
 		return fmt.Errorf("%s API key is required", spec.Name)
@@ -832,7 +832,7 @@ func writeNativeModelCatalog(providerID, path, activeModel string) error {
 	}
 	harness, ok := HarnessProvider(HarnessCodex, providerID)
 	if !ok {
-		return fmt.Errorf("provider %q has no Codex harness mapping in %s", providerID, HarnessRegistryPath())
+		return fmt.Errorf("provider %q has no Codex harness mapping in %s", providerID, HarnessRegistryPath(HarnessCodex))
 	}
 	var models []json.RawMessage
 	modelIDs := sortedHarnessModelIDs(harness.Models)

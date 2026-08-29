@@ -21,7 +21,7 @@ func DiagnoseHarnessRegistry(harnessID, providerID string) []HarnessDiagnostic {
 	if err != nil {
 		return []HarnessDiagnostic{{
 			Severity: "error",
-			Path:     HarnessRegistryPath(),
+			Path:     HarnessRegistryPath(harnessID),
 			Reason:   err.Error(),
 			Suggest:  "fix the TOML syntax or move the file aside and run --edit to regenerate defaults",
 		}}

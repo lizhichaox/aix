@@ -198,6 +198,7 @@ func TestResolveClaudeSwitchModel(t *testing.T) {
 }
 
 func TestClaudeTemplateStale(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	cases := []struct {
 		name     string
 		provider string

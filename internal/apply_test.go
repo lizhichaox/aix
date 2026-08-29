@@ -359,6 +359,7 @@ func TestDesktop3pGatewayEntryLabelsDynamicDeepSeekModel(t *testing.T) {
 }
 
 func TestDesktopOpenCodeGoPickerPrefersNative1MDefault(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	entry := desktop3pGatewayEntry("http://127.0.0.1:2026/opencode-go", "key", "opencode-go", "")
 	models, _ := entry["inferenceModels"].([]interface{})
 	if len(models) != 3 {

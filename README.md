@@ -17,8 +17,9 @@ credentials or an AIX-computed usage total. AIX synchronizes
 conversation history across provider changes without deleting or rewriting the
 conversation itself.
 
-The default model and effort come from the harness-specific registry at
-`~/.aix/harnesses.toml`. AIX ships with
+The default model and effort come from harness-specific registry files, one
+per harness, at `~/.aix/harnesses-codex.toml` and
+`~/.aix/harnesses-claude.toml`. AIX ships with
 `deepseek-v4-flash-vision-exp` and `high` as the defaults.
 
 ## Installation
@@ -61,6 +62,7 @@ file permissions.
 ```text
 aix
 ├── usage [provider]
+├── restore
 ├── claude [provider] [model] [effort]
 │   ├── restore
 │   └── restart
@@ -120,18 +122,36 @@ aix usage openrouter
 aix usage --ttl 0
 ```
 
+Claude usage reuses any valid Claude Code OAuth credential. If Claude Desktop
+is signed in independently, AIX can fall back to its recent provider-reported
+usage snapshot without requesting another login; reset times are omitted when
+the Desktop snapshot does not report them.
+
 ## Harness registry
 
 Claude and Codex have separate mappings because they require different API
-formats. The effective registry is materialized only when edited:
+formats, and each harness owns its own editable file so that editing one
+harness can never affect the other. The effective registry is materialized
+only when edited:
 
 ```bash
 aix claude opencode-go --edit
 ```
 
-The file is stored at `~/.aix/harnesses.toml`. Each provider can define a
-Claude mapping using Anthropic Messages and a Codex mapping using Responses.
-Future harnesses can add their own mapping without changing the command shape.
+`aix claude --edit` edits `~/.aix/harnesses-claude.toml` and `aix codex --edit`
+edits `~/.aix/harnesses-codex.toml`. Each provider can define a Claude mapping
+using Anthropic Messages and a Codex mapping using Responses. Future harnesses
+can add their own mapping without changing the command shape. A pre-per-harness
+single `~/.aix/harnesses.toml` (if present) is migrated into the per-harness
+files on the first edit and backed up under `~/.aix/backups/`. Pass `--editor`
+to `--edit` to choose a specific editor:
+
+```bash
+aix codex openrouter --edit --editor code
+aix claude openrouter --edit --editor "code --wait"
+```
+
+Without `--editor`, AIX uses `$VISUAL`, then `$EDITOR`, then `vi`.
 
 ## Runtime behavior
 
@@ -162,7 +182,9 @@ submitted by the harness; AIX itself has no telemetry or analytics service.
 ## Configuration files
 
 ```text
-~/.aix/harnesses.toml       Harness/provider/model/effort mappings
+~/.aix/harnesses-codex.toml Codex provider/model/effort mappings
+~/.aix/harnesses-claude.toml Claude provider/model/effort mappings
+~/.aix/harnesses.toml       Legacy single registry (migrated on first edit)
 ~/.aix/proxy.toml           Internal AIX gateway providers and credentials
 ~/.aix/state.toml           Active providers
 ~/.aix/providers/           Generated client templates

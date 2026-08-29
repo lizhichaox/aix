@@ -17,7 +17,7 @@ import (
 // explicit model. --list shows the provider's models and defaults.
 // Fixed subcommands (restart/restore) are matched by cobra before this runs.
 func runCodexProvider(cmd *cobra.Command, args []string) error {
-	if err := validateHarnessAuxiliaryFlags(codexListFlag, codexEditFlag, codexDoctorFlag, len(args)); err != nil {
+	if err := validateHarnessAuxiliaryFlags(codexListFlag, codexEditFlag, codexDoctorFlag, len(args), codexEditorFlag); err != nil {
 		return err
 	}
 	providerArg := ""
@@ -25,7 +25,7 @@ func runCodexProvider(cmd *cobra.Command, args []string) error {
 		providerArg = args[0]
 	}
 	if codexEditFlag {
-		return editHarnessRegistry(internal.HarnessCodex, providerArg)
+		return editHarnessRegistry(internal.HarnessCodex, providerArg, codexEditorFlag)
 	}
 	if codexDoctorFlag {
 		return runHarnessDoctor(internal.HarnessCodex, providerArg)
@@ -238,15 +238,17 @@ var codexRestoreCmd = &cobra.Command{
 	Short: "Restore Codex's default native API",
 	Long:  "Remove AIX-managed third-party Codex provider settings and restore Codex's default native API.",
 	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		app, err := internal.ResolveHarness("codex")
-		if err != nil {
-			return err
-		}
-		if err := restoreCodexNative(app); err != nil {
-			return err
-		}
-		fmt.Println("✓ Codex restored to its default native API")
-		return nil
-	},
+	RunE:  runCodexRestore,
+}
+
+func runCodexRestore(cmd *cobra.Command, args []string) error {
+	app, err := internal.ResolveHarness("codex")
+	if err != nil {
+		return err
+	}
+	if err := restoreCodexNative(app); err != nil {
+		return err
+	}
+	fmt.Println("✓ Codex restored to its default native API")
+	return nil
 }

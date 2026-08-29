@@ -117,7 +117,7 @@ func SetDeepSeekClaudeMappings(selectedModel ...string) error {
 	}
 	harness, ok := HarnessProvider(HarnessClaude, "deepseek")
 	if !ok {
-		return fmt.Errorf("deepseek has no Claude harness mapping in %s", HarnessRegistryPath())
+		return fmt.Errorf("deepseek has no Claude harness mapping in %s", HarnessRegistryPath(HarnessClaude))
 	}
 	p.Models = make(map[string]string, len(harness.Models)*2+2)
 	for _, model := range harness.Models {
@@ -174,7 +174,7 @@ func EnsureClaudeProxyProvider(providerID string) error {
 	proxyID := ClaudeProxyProviderID(providerID)
 	harness, ok := HarnessProvider(HarnessClaude, providerID)
 	if !ok {
-		return fmt.Errorf("provider %q has no Claude harness mapping in %s", providerID, HarnessRegistryPath())
+		return fmt.Errorf("provider %q has no Claude harness mapping in %s", providerID, HarnessRegistryPath(HarnessClaude))
 	}
 	cfg, err := LoadProxyConfigForWrite()
 	if err != nil {
@@ -221,7 +221,7 @@ func EnsureCodexProxyProvider(providerID, upstreamKey string) (string, string, e
 	}
 	harness, ok := HarnessProvider(HarnessCodex, providerID)
 	if !ok {
-		return "", "", fmt.Errorf("provider %q has no Codex harness mapping in %s", providerID, HarnessRegistryPath())
+		return "", "", fmt.Errorf("provider %q has no Codex harness mapping in %s", providerID, HarnessRegistryPath(HarnessCodex))
 	}
 	cfg, err := LoadProxyConfigForWrite()
 	if err != nil {

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.11.7 (2026-08-29)
+
+- Claude usage now tries every existing Claude Code OAuth credential before
+  asking the user to sign in again. When Claude Desktop has a recent native
+  usage snapshot but its private session cannot be reused for the usage API,
+  AIX reports that snapshot instead of requiring duplicate authorization.
+- Added `aix restore` as a shortcut that restores Claude Code, Claude Desktop,
+  and Codex to their native APIs while retaining the per-harness restore
+  commands.
+- Split the harness registry into one file per harness (`harnesses-codex.toml`
+  and `harnesses-claude.toml`) so `aix codex --edit` and `aix claude --edit`
+  edit isolated files and never touch another harness's mappings. The flat
+  per-harness format starts each provider directly (`[providers.<provider>]`)
+  without the `harnesses.<harness>` wrapper. Existing single-file and
+  transitional per-harness registries are migrated (with backups) on the first
+  edit.
+- Added `--editor` to `aix codex` and `aix claude` to pick the editor launched
+  by `--edit`; it overrides `$VISUAL`, then `$EDITOR`, then `vi`.
+
 ## v0.11.6 (2026-08-26)
 
 - `aix -v` now prints a one-line purpose summary and the common commands next to

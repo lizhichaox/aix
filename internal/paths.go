@@ -57,8 +57,15 @@ func ClaudeConfigJSONPath() string {
 }
 
 // HarnessRegistryPath is the user-editable provider/model/effort mapping
-// layered over AIX's bundled harness defaults.
-func HarnessRegistryPath() string {
+// layered over AIX's bundled harness defaults. Each harness owns its own file
+// so that editing one harness can never touch another harness's mappings.
+func HarnessRegistryPath(harnessID string) string {
+	return filepath.Join(HomeDir(), ".aix", "harnesses-"+harnessID+".toml")
+}
+
+// LegacyHarnessRegistryPath is the pre-per-harness single registry file. It is
+// read once on first load and migrated into per-harness files.
+func LegacyHarnessRegistryPath() string {
 	return filepath.Join(HomeDir(), ".aix", "harnesses.toml")
 }
 

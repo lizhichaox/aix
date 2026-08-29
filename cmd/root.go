@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "0.11.6"
+var Version = "0.11.7"
 
 var rootCmd = &cobra.Command{
 	Use:   "aix",
@@ -50,6 +50,7 @@ keeping your conversations ready to continue across every switch.
 Common commands:
   aix setup
   aix status
+  aix restore
   aix claude <provider> [model] [effort]
   aix codex <provider> [model] [effort]
   aix usage [provider]

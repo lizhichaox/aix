@@ -19,14 +19,14 @@ func showHarnessProviderMapping(harnessID, providerID string) error {
 		if _, err := internal.LoadHarnessRegistry(); err != nil {
 			return err
 		}
-		return fmt.Errorf("provider %q has no %s harness mapping (edit %s with --edit)", providerID, harnessID, internal.HarnessRegistryPath())
+		return fmt.Errorf("provider %q has no %s harness mapping (edit %s with --edit)", providerID, harnessID, internal.HarnessRegistryPath(harnessID))
 	}
 	fmt.Printf("%s / %s mapping\n", harnessID, providerID)
 	fmt.Printf("  API format:     %s\n", spec.APIFormat)
 	fmt.Printf("  Base URL:       %s\n", spec.BaseURL)
 	fmt.Printf("  Default model:  %s\n", spec.DefaultModel)
 	fmt.Printf("  Default effort: %s\n", spec.DefaultEffort)
-	fmt.Printf("  Source:         %s\n\n", harnessRegistrySource())
+	fmt.Printf("  Source:         %s\n\n", harnessRegistrySource(harnessID))
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "MODEL KEY\tCLIENT MODEL\tUPSTREAM MODEL\tDEFAULT EFFORT\tEFFORTS")
@@ -46,16 +46,16 @@ func showHarnessProviderMapping(harnessID, providerID string) error {
 	return tw.Flush()
 }
 
-func harnessRegistrySource() string {
-	path := internal.HarnessRegistryPath()
+func harnessRegistrySource(harnessID string) string {
+	path := internal.HarnessRegistryPath(harnessID)
 	if _, err := os.Stat(path); err == nil {
 		return path
 	}
 	return "AIX bundled defaults (run --edit to materialize)"
 }
 
-func editHarnessRegistry(harnessID, providerID string) error {
-	path, err := internal.EnsureHarnessRegistryFile()
+func editHarnessRegistry(harnessID, providerID, editorOverride string) error {
+	path, err := internal.EnsureHarnessRegistryFile(harnessID)
 	if err != nil {
 		return err
 	}
@@ -64,18 +64,12 @@ func editHarnessRegistry(harnessID, providerID string) error {
 		if mkdirErr := os.MkdirAll(internal.BackupsDir(), 0700); mkdirErr != nil {
 			return mkdirErr
 		}
-		backupPath = filepath.Join(internal.BackupsDir(), "harnesses.toml.edit."+time.Now().Format("20060102-150405.000")+".bak")
+		backupPath = filepath.Join(internal.BackupsDir(), filepath.Base(path)+".edit."+time.Now().Format("20060102-150405.000")+".bak")
 		if writeErr := os.WriteFile(backupPath, data, 0600); writeErr != nil {
 			return writeErr
 		}
 	}
-	editor := strings.TrimSpace(os.Getenv("VISUAL"))
-	if editor == "" {
-		editor = strings.TrimSpace(os.Getenv("EDITOR"))
-	}
-	if editor == "" {
-		editor = "vi"
-	}
+	editor := resolveEditor(editorOverride)
 	parts := strings.Fields(editor)
 	if len(parts) == 0 {
 		return fmt.Errorf("VISUAL/EDITOR does not name an editor")
@@ -93,6 +87,22 @@ func editHarnessRegistry(harnessID, providerID string) error {
 		fmt.Printf("Backup: %s\n", backupPath)
 	}
 	return runHarnessDoctor(harnessID, providerID)
+}
+
+// resolveEditor picks the editor for --edit. An explicit --editor flag wins,
+// then $VISUAL, then $EDITOR, then the "vi" fallback. A command line with
+// arguments (e.g. "code --wait") is preserved after the first word.
+func resolveEditor(editorOverride string) string {
+	if e := strings.TrimSpace(editorOverride); e != "" {
+		return e
+	}
+	if e := strings.TrimSpace(os.Getenv("VISUAL")); e != "" {
+		return e
+	}
+	if e := strings.TrimSpace(os.Getenv("EDITOR")); e != "" {
+		return e
+	}
+	return "vi"
 }
 
 func runHarnessDoctor(harnessID, providerID string) error {
@@ -123,7 +133,7 @@ func runHarnessDoctor(harnessID, providerID string) error {
 	return nil
 }
 
-func validateHarnessAuxiliaryFlags(list, edit, doctor bool, argCount int) error {
+func validateHarnessAuxiliaryFlags(list, edit, doctor bool, argCount int, editor string) error {
 	selected := 0
 	for _, enabled := range []bool{list, edit, doctor} {
 		if enabled {
@@ -138,6 +148,9 @@ func validateHarnessAuxiliaryFlags(list, edit, doctor bool, argCount int) error 
 	}
 	if list && argCount == 0 {
 		return fmt.Errorf("--list requires a provider argument")
+	}
+	if editor != "" && !edit {
+		return fmt.Errorf("--editor requires --edit")
 	}
 	return nil
 }
