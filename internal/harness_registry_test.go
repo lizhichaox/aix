@@ -7,6 +7,7 @@ import (
 )
 
 func TestHarnessProviderKeepsProtocolCatalogsSeparate(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	codex, ok := HarnessProvider(HarnessCodex, "openrouter")
 	if !ok {
 		t.Fatal("openrouter Codex harness mapping missing")
@@ -27,6 +28,7 @@ func TestHarnessProviderKeepsProtocolCatalogsSeparate(t *testing.T) {
 }
 
 func TestResolveHarnessSelectionDefaultsAndEffort(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	for _, harness := range []string{HarnessCodex, HarnessClaude} {
 		selection, err := ResolveHarnessSelection(harness, "openrouter", "", "")
 		if err != nil {
@@ -62,7 +64,7 @@ func TestExplicitModelUsesItsOwnDefaultEffort(t *testing.T) {
 	codex.Models["deepseek/deepseek-v4-pro"] = model
 	provider.Harnesses[HarnessCodex] = codex
 	registry.Providers["openrouter"] = provider
-	if err := WriteHarnessRegistry(HarnessRegistryPath(), registry); err != nil {
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessCodex), flatHarnessFile(registry, HarnessCodex)); err != nil {
 		t.Fatal(err)
 	}
 	selection, err := ResolveHarnessSelection(HarnessCodex, "openrouter", "deepseek/deepseek-v4-pro", "")
@@ -77,11 +79,11 @@ func TestExplicitModelUsesItsOwnDefaultEffort(t *testing.T) {
 func TestEditableHarnessRegistryOverridesDefaults(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	path, err := EnsureHarnessRegistryFile()
+	path, err := EnsureHarnessRegistryFile(HarnessCodex)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if path != filepath.Join(home, ".aix", "harnesses.toml") {
+	if path != filepath.Join(home, ".aix", "harnesses-codex.toml") {
 		t.Fatalf("registry path = %q", path)
 	}
 	registry, err := LoadHarnessRegistry()
@@ -95,7 +97,7 @@ func TestEditableHarnessRegistryOverridesDefaults(t *testing.T) {
 	codex.BaseURL = "https://example.test/responses"
 	provider.Harnesses[HarnessCodex] = codex
 	registry.Providers["openrouter"] = provider
-	if err := WriteHarnessRegistry(path, registry); err != nil {
+	if err := WriteHarnessFile(path, flatHarnessFile(registry, HarnessCodex)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -126,7 +128,7 @@ func TestLegacyHarnessRegistryInheritsBundledContextWindow(t *testing.T) {
 	if err := EnsureDirs(); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteHarnessRegistry(HarnessRegistryPath(), registry); err != nil {
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessClaude), flatHarnessFile(registry, HarnessClaude)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,7 +156,7 @@ func TestVersionOneRegistryAddsOpenCodeGoDeepSeekMessagesModels(t *testing.T) {
 	if err := EnsureDirs(); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteHarnessRegistry(HarnessRegistryPath(), registry); err != nil {
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessClaude), flatHarnessFile(registry, HarnessClaude)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +184,7 @@ func TestHarnessDoctorExplainsInvalidDefaults(t *testing.T) {
 	claude.DefaultEffort = "ultra"
 	provider.Harnesses[HarnessClaude] = claude
 	registry.Providers["deepseek"] = provider
-	if err := WriteHarnessRegistry(HarnessRegistryPath(), registry); err != nil {
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessClaude), flatHarnessFile(registry, HarnessClaude)); err != nil {
 		t.Fatal(err)
 	}
 	diagnostics := DiagnoseHarnessRegistry(HarnessClaude, "deepseek")
@@ -228,7 +230,7 @@ func TestClaudeProxyIsDerivedFromEditableHarnessMapping(t *testing.T) {
 	claude.Models[DefaultClaudeUpstreamModel] = model
 	provider.Harnesses[HarnessClaude] = claude
 	registry.Providers["opencode-go"] = provider
-	if err := WriteHarnessRegistry(HarnessRegistryPath(), registry); err != nil {
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessClaude), flatHarnessFile(registry, HarnessClaude)); err != nil {
 		t.Fatal(err)
 	}
 	if err := EnsureClaudeProxyProvider("opencode-go"); err != nil {
@@ -245,7 +247,83 @@ func TestClaudeProxyIsDerivedFromEditableHarnessMapping(t *testing.T) {
 	if got := configured.Models[model.ClientModel]; got != "provider-specific-v4-vision" {
 		t.Errorf("proxy mapping = %q", got)
 	}
-	if _, err := os.Stat(HarnessRegistryPath()); err != nil {
+	if _, err := os.Stat(HarnessRegistryPath(HarnessClaude)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPerHarnessFilesAreIndependent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if _, err := EnsureHarnessRegistryFile(HarnessCodex); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadHarnessRegistry(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Override only the Codex mapping.
+	codex, err := LoadHarnessRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := codex.Providers["openrouter"]
+	codexSpec := provider.Harnesses[HarnessCodex]
+	codexSpec.DefaultModel = "deepseek/deepseek-v4-pro"
+	provider.Harnesses[HarnessCodex] = codexSpec
+	codex.Providers["openrouter"] = provider
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessCodex), flatHarnessFile(codex, HarnessCodex)); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := LoadHarnessRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Providers["openrouter"].Harnesses[HarnessCodex].DefaultModel; got != "deepseek/deepseek-v4-pro" {
+		t.Fatalf("codex default model = %q, want overridden value", got)
+	}
+	claude := loaded.Providers["openrouter"].Harnesses[HarnessClaude]
+	if claude.DefaultModel == "deepseek/deepseek-v4-pro" {
+		t.Fatalf("editing Codex changed the Claude mapping: %+v", claude)
+	}
+}
+
+func TestLegacyRegistryMigratesToPerHarnessFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	legacy := BundledHarnessRegistry()
+	provider := legacy.Providers["deepseek"]
+	codex := provider.Harnesses[HarnessCodex]
+	codex.DefaultModel = "deepseek/deepseek-v4-pro"
+	provider.Harnesses[HarnessCodex] = codex
+	legacy.Providers["deepseek"] = provider
+	if err := WriteHarnessRegistry(LegacyHarnessRegistryPath(), legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := EnsureHarnessRegistryFile(HarnessCodex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != filepath.Join(home, ".aix", "harnesses-codex.toml") {
+		t.Fatalf("registry path = %q", path)
+	}
+	if _, err := os.Stat(LegacyHarnessRegistryPath()); !os.IsNotExist(err) {
+		t.Fatalf("legacy registry should be retired after migration: %v", err)
+	}
+
+	loaded, err := LoadHarnessRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.Providers["deepseek"].Harnesses[HarnessCodex].DefaultModel; got != "deepseek/deepseek-v4-pro" {
+		t.Fatalf("migrated codex default = %q, want preserved legacy value", got)
+	}
+	if _, ok := loaded.Providers["deepseek"].Harnesses[HarnessClaude]; !ok {
+		t.Fatal("claude mapping lost during migration")
 	}
 }

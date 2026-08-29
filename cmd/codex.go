@@ -24,6 +24,7 @@ var (
 	codexEffortFlag string
 	codexEditFlag   bool
 	codexDoctorFlag bool
+	codexEditorFlag string
 )
 
 var codexRestartCmd = &cobra.Command{
@@ -48,5 +49,6 @@ func init() {
 	codexCmd.Flags().StringVar(&codexEffortFlag, "effort", "", "reasoning effort (uses the provider default when omitted)")
 	codexCmd.Flags().BoolVar(&codexEditFlag, "edit", false, "edit provider/model/effort mappings")
 	codexCmd.Flags().BoolVar(&codexDoctorFlag, "doctor", false, "validate provider/model/effort mappings")
+	codexCmd.Flags().StringVar(&codexEditorFlag, "editor", "", "editor to launch for --edit (overrides $VISUAL/$EDITOR)")
 	rootCmd.AddCommand(codexCmd)
 }

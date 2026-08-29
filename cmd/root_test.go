@@ -55,6 +55,7 @@ func TestVersionOutputDescribesPurposeAndCommands(t *testing.T) {
 		"Switch AI providers, models, and reasoning effort across AI harnesses while",
 		"keeping your conversations ready to continue across every switch.",
 		"aix status",
+		"aix restore",
 		"aix claude <provider> [model] [effort]",
 		"aix codex <provider> [model] [effort]",
 	} {
@@ -65,7 +66,7 @@ func TestVersionOutputDescribesPurposeAndCommands(t *testing.T) {
 }
 
 func TestPublicCommandSurface(t *testing.T) {
-	if got, want := commandNames(rootCmd), []string{"claude", "codex", "log", "setup", "status", "usage"}; !reflect.DeepEqual(got, want) {
+	if got, want := commandNames(rootCmd), []string{"claude", "codex", "log", "restore", "setup", "status", "usage"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("root commands = %v, want %v", got, want)
 	}
 	if got, want := commandNames(claudeCmd), []string{"restart", "restore"}; !reflect.DeepEqual(got, want) {
@@ -88,7 +89,7 @@ func TestCoreAppsExcludeRemovedIntegrations(t *testing.T) {
 }
 
 func TestHarnessFlagsStayAligned(t *testing.T) {
-	want := []string{"doctor", "edit", "effort", "list"}
+	want := []string{"doctor", "edit", "editor", "effort", "list"}
 	for _, command := range []*cobra.Command{claudeCmd, codexCmd} {
 		got := make([]string, 0)
 		command.Flags().VisitAll(func(flag *pflag.Flag) {

@@ -357,7 +357,7 @@ func TestConfigureCodexUsesEditableHarnessBaseURL(t *testing.T) {
 	codex.Models[codex.DefaultModel] = defaultModel
 	provider.Harnesses[HarnessCodex] = codex
 	registry.Providers["deepseek"] = provider
-	if err := WriteHarnessRegistry(HarnessRegistryPath(), registry); err != nil {
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessCodex), flatHarnessFile(registry, HarnessCodex)); err != nil {
 		t.Fatal(err)
 	}
 	opts := CodexNativeOptions{

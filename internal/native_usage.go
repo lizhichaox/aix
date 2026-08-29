@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
@@ -197,39 +198,112 @@ type claudeUsageResponse struct {
 }
 
 func readClaudeNativeUsage(ctx context.Context) (NativeUsage, error) {
-	credentials, err := readClaudeOAuthCredentials(ctx)
+	credentials, err := readClaudeOAuthCredentialCandidates(ctx)
+	if err == nil {
+		for _, candidate := range credentials {
+			usage, rejected, queryErr := queryClaudeUsage(ctx, candidate)
+			if queryErr == nil {
+				return usage, nil
+			}
+			if !rejected {
+				return NativeUsage{}, queryErr
+			}
+		}
+	}
+	if usage, snapshotErr := readClaudeDesktopUsageSnapshot(time.Now()); snapshotErr == nil {
+		return usage, nil
+	}
 	if err != nil {
 		return NativeUsage{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", nil)
+	return NativeUsage{}, errors.New("Claude native logins are expired or unauthorized; sign in to Claude Code or Claude Desktop again")
+}
+
+const claudeDesktopUsageMaxAge = time.Hour
+
+func readClaudeDesktopUsageSnapshot(now time.Time) (NativeUsage, error) {
+	path := filepath.Join(HomeDir(), "Library", "Application Support", "Claude", "plan-usage-history.json")
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return NativeUsage{}, err
+	}
+	return parseClaudeDesktopUsageSnapshot(raw, now)
+}
+
+func parseClaudeDesktopUsageSnapshot(raw []byte, now time.Time) (NativeUsage, error) {
+	var history struct {
+		Samples []struct {
+			TimestampMS int64 `json:"t"`
+			Usage       struct {
+				FiveHour *float64 `json:"fh"`
+				SevenDay *float64 `json:"sd"`
+			} `json:"u"`
+		} `json:"samples"`
+	}
+	if err := json.Unmarshal(raw, &history); err != nil {
+		return NativeUsage{}, fmt.Errorf("decode Claude Desktop usage history: %w", err)
+	}
+	if len(history.Samples) == 0 {
+		return NativeUsage{}, errors.New("Claude Desktop usage history is empty")
+	}
+	latest := history.Samples[len(history.Samples)-1]
+	reportedAt := time.UnixMilli(latest.TimestampMS)
+	age := now.Sub(reportedAt)
+	if latest.TimestampMS <= 0 || age > claudeDesktopUsageMaxAge || age < -5*time.Minute {
+		return NativeUsage{}, errors.New("Claude Desktop usage snapshot is stale")
+	}
+	usage := NativeUsage{Harness: HarnessClaude}
+	for _, candidate := range []struct {
+		name  string
+		value *float64
+	}{
+		{"5-hour", latest.Usage.FiveHour},
+		{"weekly", latest.Usage.SevenDay},
+	} {
+		if candidate.value != nil {
+			usage.Windows = append(usage.Windows, UsageWindow{
+				Name:             candidate.name,
+				UsedPercent:      *candidate.value,
+				RemainingPercent: clampPercent(100 - *candidate.value),
+			})
+		}
+	}
+	if len(usage.Windows) == 0 {
+		return NativeUsage{}, errors.New("Claude Desktop usage snapshot has no usage windows")
+	}
+	return usage, nil
+}
+
+func queryClaudeUsage(ctx context.Context, credentials claudeOAuthCredentials) (NativeUsage, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.anthropic.com/api/oauth/usage", nil)
+	if err != nil {
+		return NativeUsage{}, false, err
 	}
 	req.Header.Set("Authorization", "Bearer "+credentials.AccessToken)
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 	req.Header.Set("User-Agent", "aix/"+ProxyVersion)
 	resp, err := nativeUsageHTTPClient.Do(req)
 	if err != nil {
-		return NativeUsage{}, fmt.Errorf("query Claude native usage: %w", err)
+		return NativeUsage{}, false, fmt.Errorf("query Claude native usage: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return NativeUsage{}, errors.New("Claude native login expired or unauthorized; run `claude auth login` and sign in again")
+			return NativeUsage{}, true, errors.New("Claude OAuth credential rejected")
 		}
-		return NativeUsage{}, fmt.Errorf("Claude usage query returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return NativeUsage{}, false, fmt.Errorf("Claude usage query returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return NativeUsage{}, err
+		return NativeUsage{}, false, err
 	}
 	usage, err := parseClaudeUsage(raw)
 	if err != nil {
-		return NativeUsage{}, err
+		return NativeUsage{}, false, err
 	}
 	usage.Plan = credentials.SubscriptionType
-	return usage, nil
+	return usage, false, nil
 }
 
 func parseClaudeUsage(raw []byte) (NativeUsage, error) {
@@ -266,52 +340,77 @@ type claudeOAuthCredentials struct {
 	SubscriptionType string
 }
 
-func readClaudeOAuthCredentials(ctx context.Context) (claudeOAuthCredentials, error) {
-	var raw []byte
+func readClaudeOAuthCredentialCandidates(ctx context.Context) ([]claudeOAuthCredentials, error) {
+	var candidates []claudeOAuthCredentials
+	seen := make(map[string]bool)
+	add := func(raw []byte) {
+		for _, candidate := range parseClaudeOAuthCredentialCandidates(raw) {
+			if candidate.AccessToken != "" && !seen[candidate.AccessToken] {
+				seen[candidate.AccessToken] = true
+				candidates = append(candidates, candidate)
+			}
+		}
+	}
 	if runtime.GOOS == "darwin" {
 		for _, service := range []string{"Claude Code-credentials", "Claude Code"} {
 			out, err := nativeUsageCommand(ctx, "security", "find-generic-password", "-s", service, "-w").Output()
 			if err == nil && len(bytes.TrimSpace(out)) > 0 {
-				raw = bytes.TrimSpace(out)
-				break
+				add(bytes.TrimSpace(out))
 			}
 		}
 	}
-	if len(raw) == 0 {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return claudeOAuthCredentials{}, err
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	for _, path := range []string{
+		home + "/.claude/.credentials.json",
+		home + "/.config/claude/.credentials.json",
+		ClaudeDesktopConfigPath(),
+		NativeDesktopSnapPath(),
+	} {
+		if data, err := os.ReadFile(path); err == nil {
+			add(data)
 		}
-		for _, path := range []string{home + "/.claude/.credentials.json", home + "/.config/claude/.credentials.json"} {
-			if data, err := os.ReadFile(path); err == nil {
-				raw = data
-				break
+	}
+	if len(candidates) == 0 {
+		return nil, errors.New("Claude native login not found; sign in to Claude Code or Claude Desktop")
+	}
+	return candidates, nil
+}
+
+func parseClaudeOAuthCredentialCandidates(raw []byte) []claudeOAuthCredentials {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return nil
+	}
+	var candidates []claudeOAuthCredentials
+	var collect func(any)
+	collect = func(current any) {
+		switch typed := current.(type) {
+		case map[string]any:
+			token, _ := typed["accessToken"].(string)
+			if strings.TrimSpace(token) != "" {
+				subscription, _ := typed["subscriptionType"].(string)
+				candidates = append(candidates, claudeOAuthCredentials{AccessToken: strings.TrimSpace(token), SubscriptionType: subscription})
+			}
+		case []any:
+			for _, child := range typed {
+				collect(child)
 			}
 		}
 	}
-	if len(raw) == 0 {
-		return claudeOAuthCredentials{}, errors.New("Claude native login not found; run `claude auth login`")
+	root, ok := value.(map[string]any)
+	if !ok {
+		return nil
 	}
-	var credentials struct {
-		ClaudeAI *struct {
-			AccessToken      string `json:"accessToken"`
-			SubscriptionType string `json:"subscriptionType"`
-		} `json:"claudeAiOauth"`
-		AccessToken      string `json:"accessToken"`
-		SubscriptionType string `json:"subscriptionType"`
+	collect(root)
+	for _, key := range []string{"claudeAiOauth", "oauthTokens"} {
+		if nested, exists := root[key]; exists {
+			collect(nested)
+		}
 	}
-	if err := json.Unmarshal(raw, &credentials); err != nil {
-		return claudeOAuthCredentials{}, fmt.Errorf("decode Claude native credentials: %w", err)
-	}
-	result := claudeOAuthCredentials{AccessToken: credentials.AccessToken, SubscriptionType: credentials.SubscriptionType}
-	if credentials.ClaudeAI != nil && credentials.ClaudeAI.AccessToken != "" {
-		result.AccessToken = credentials.ClaudeAI.AccessToken
-		result.SubscriptionType = credentials.ClaudeAI.SubscriptionType
-	}
-	if result.AccessToken == "" {
-		return claudeOAuthCredentials{}, errors.New("Claude native OAuth token not found; run `claude auth login`")
-	}
-	return result, nil
+	return candidates
 }
 
 func usageWindowName(minutes int64) string {

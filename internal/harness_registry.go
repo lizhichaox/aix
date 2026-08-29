@@ -64,6 +64,15 @@ type HarnessRegistryConfig struct {
 	Providers map[string]HarnessProviderMappings `toml:"providers"`
 }
 
+// HarnessFileConfig is the on-disk format for one harness's user file. Because
+// the file is already scoped to a single harness (e.g. harnesses-codex.toml),
+// each provider holds the harness spec directly with no harness wrapper or
+// nested harness section.
+type HarnessFileConfig struct {
+	Version   int                            `toml:"version"`
+	Providers map[string]HarnessProviderSpec `toml:"providers"`
+}
+
 // HarnessSelection is the fully resolved command input consumed by a harness
 // adapter. Model and effort defaults have already been applied and validated.
 type HarnessSelection struct {
@@ -171,16 +180,105 @@ func BundledHarnessRegistry() HarnessRegistryConfig {
 	return registry
 }
 
-// LoadHarnessRegistry loads the user mapping when present; otherwise it
-// returns the bundled registry. A user file is authoritative so removing a
-// harness or model from it removes that mapping from the effective registry.
+// LoadHarnessRegistry returns the effective registry across both harnesses.
+// Each harness has its own user file layered over the bundled defaults. A
+// harness file is authoritative for that harness, so removing a provider or
+// model from it removes that mapping from the effective registry.
 func LoadHarnessRegistry() (HarnessRegistryConfig, error) {
-	path := HarnessRegistryPath()
+	bundled := BundledHarnessRegistry()
+	result := HarnessRegistryConfig{Version: 2, Providers: make(map[string]HarnessProviderMappings)}
+	for _, harnessID := range []string{HarnessCodex, HarnessClaude} {
+		sources, err := loadHarnessRegistryFor(harnessID, bundled)
+		if err != nil {
+			return HarnessRegistryConfig{}, err
+		}
+		for providerID, provider := range sources.Providers {
+			spec, ok := provider.Harnesses[harnessID]
+			if !ok {
+				continue
+			}
+			existing, exists := result.Providers[providerID]
+			if !exists {
+				existing = HarnessProviderMappings{Harnesses: make(map[string]HarnessProviderSpec)}
+			}
+			existing.Harnesses[harnessID] = spec
+			result.Providers[providerID] = existing
+		}
+	}
+	return result, nil
+}
+
+// loadHarnessRegistryFor returns the effective registry for a single harness.
+// When a user file exists it is authoritative; otherwise the bundled mapping
+// for that harness is returned.
+func loadHarnessRegistryFor(harnessID string, bundled HarnessRegistryConfig) (HarnessRegistryConfig, error) {
+	path := HarnessRegistryPath(harnessID)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return BundledHarnessRegistry(), nil
+		// No per-harness file yet. Fall back to the legacy single-file mapping
+		// for this harness, then to the bundled defaults. Reading never
+		// mutates the legacy file.
+		legacy := LegacyHarnessRegistryPath()
+		if _, lerr := os.Stat(legacy); lerr == nil {
+			registry, err := loadRegistrySnapshot(legacy)
+			if err != nil {
+				return HarnessRegistryConfig{}, err
+			}
+			return projectHarnessRegistry(normalizeRegistry(registry), harnessID), nil
+		} else if !os.IsNotExist(lerr) {
+			return HarnessRegistryConfig{}, fmt.Errorf("stat %s: %w", legacy, lerr)
+		}
+		return projectHarnessRegistry(bundled, harnessID), nil
 	} else if err != nil {
 		return HarnessRegistryConfig{}, fmt.Errorf("stat %s: %w", path, err)
 	}
+	registry, _, err := decodePerHarnessFile(path, harnessID)
+	return registry, err
+}
+
+// decodePerHarnessFile reads a per-harness config file. It accepts both the
+// current flat format and the transitional nested format written by earlier
+// builds (providers.<provider>.harnesses.<harness>), returning the harness's
+// effective mappings. The bool reports whether the file used the nested shape
+// so the caller can migrate it to flat on edit.
+func decodePerHarnessFile(path, harnessID string) (HarnessRegistryConfig, bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return HarnessRegistryConfig{}, false, fmt.Errorf("read %s: %w", path, err)
+	}
+	var full HarnessRegistryConfig
+	if _, err := toml.Decode(string(data), &full); err == nil {
+		for _, provider := range full.Providers {
+			if spec, ok := provider.Harnesses[harnessID]; ok && spec.APIFormat != "" {
+				return normalizeRegistry(full), true, nil
+			}
+		}
+	}
+	var file HarnessFileConfig
+	if _, err := toml.Decode(string(data), &file); err != nil {
+		return HarnessRegistryConfig{}, false, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if file.Version != 1 && file.Version != 2 {
+		return HarnessRegistryConfig{}, false, fmt.Errorf("unsupported harness registry version %d in %s (expected 1 or 2)", file.Version, path)
+	}
+	if file.Providers == nil {
+		file.Providers = map[string]HarnessProviderSpec{}
+	}
+	return normalizeRegistry(harnessFileToRegistry(file, harnessID)), false, nil
+}
+
+// harnessFileToRegistry wraps a flat per-harness file into the full registry
+// shape so the shared normalize/merge path can consume it.
+func harnessFileToRegistry(file HarnessFileConfig, harnessID string) HarnessRegistryConfig {
+	registry := HarnessRegistryConfig{Version: file.Version, Providers: make(map[string]HarnessProviderMappings)}
+	for providerID, spec := range file.Providers {
+		registry.Providers[providerID] = HarnessProviderMappings{Harnesses: map[string]HarnessProviderSpec{harnessID: spec}}
+	}
+	return registry
+}
+
+// loadRegistrySnapshot decodes a full-format registry file and validates its
+// version. It is used for the legacy single-file registry.
+func loadRegistrySnapshot(path string) (HarnessRegistryConfig, error) {
 	var registry HarnessRegistryConfig
 	if _, err := toml.DecodeFile(path, &registry); err != nil {
 		return HarnessRegistryConfig{}, fmt.Errorf("parse %s: %w", path, err)
@@ -191,6 +289,12 @@ func LoadHarnessRegistry() (HarnessRegistryConfig, error) {
 	if registry.Providers == nil {
 		registry.Providers = map[string]HarnessProviderMappings{}
 	}
+	return registry, nil
+}
+
+// normalizeRegistry applies version upgrades, fills derived fields, and
+// inherits bundled capability metadata for fields absent from a user file.
+func normalizeRegistry(registry HarnessRegistryConfig) HarnessRegistryConfig {
 	bundled := BundledHarnessRegistry()
 	if registry.Version == 1 {
 		// Version 2 adds the two documented-but-previously-unlisted DeepSeek
@@ -253,21 +357,66 @@ func LoadHarnessRegistry() (HarnessRegistryConfig, error) {
 		}
 		registry.Providers[providerID] = provider
 	}
-	return registry, nil
+	return registry
+}
+
+// projectHarnessRegistry extracts a single harness's mappings into its own
+// registry, dropping every other harness.
+func projectHarnessRegistry(registry HarnessRegistryConfig, harnessID string) HarnessRegistryConfig {
+	out := HarnessRegistryConfig{Version: registry.Version, Providers: make(map[string]HarnessProviderMappings)}
+	for providerID, provider := range registry.Providers {
+		spec, ok := provider.Harnesses[harnessID]
+		if !ok {
+			continue
+		}
+		out.Providers[providerID] = HarnessProviderMappings{Harnesses: map[string]HarnessProviderSpec{harnessID: spec}}
+	}
+	return out
+}
+
+// flatHarnessFile projects a full registry down to the flat per-harness file
+// format used for one harness.
+func flatHarnessFile(registry HarnessRegistryConfig, harnessID string) HarnessFileConfig {
+	out := HarnessFileConfig{Version: registry.Version, Providers: make(map[string]HarnessProviderSpec)}
+	for providerID, provider := range registry.Providers {
+		spec, ok := provider.Harnesses[harnessID]
+		if !ok {
+			continue
+		}
+		out.Providers[providerID] = spec
+	}
+	return out
 }
 
 // WriteHarnessRegistry writes a complete editable registry with private file
 // permissions because provider configuration may reveal internal endpoints.
 func WriteHarnessRegistry(path string, registry HarnessRegistryConfig) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
 	var content bytes.Buffer
 	content.WriteString("# AIX harness provider/model/effort mappings.\n")
 	content.WriteString("# Each harness has its own API format and model catalog. Map keys are logical model IDs.\n")
 	content.WriteString("# default_model must name a model key; default_effort must be supported by that model.\n\n")
 	if err := toml.NewEncoder(&content).Encode(registry); err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
+	}
+	return writeRegistryFile(path, content.Bytes())
+}
+
+// WriteHarnessFile writes a flat per-harness registry with private file
+// permissions because provider configuration may reveal internal endpoints.
+func WriteHarnessFile(path string, file HarnessFileConfig) error {
+	var content bytes.Buffer
+	content.WriteString("# AIX harness provider/model/effort mappings.\n")
+	content.WriteString("# Map keys are logical model IDs; default_model must name a model key.\n")
+	content.WriteString("# default_effort must be supported by that model.\n\n")
+	if err := toml.NewEncoder(&content).Encode(file); err != nil {
+		return fmt.Errorf("encode %s: %w", path, err)
+	}
+	return writeRegistryFile(path, content.Bytes())
+}
+
+func writeRegistryFile(path string, content []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".harnesses-*.toml")
 	if err != nil {
@@ -279,7 +428,7 @@ func WriteHarnessRegistry(path string, registry HarnessRegistryConfig) error {
 		tmp.Close()
 		return err
 	}
-	if _, err := tmp.Write(content.Bytes()); err != nil {
+	if _, err := tmp.Write(content); err != nil {
 		tmp.Close()
 		return err
 	}
@@ -289,18 +438,62 @@ func WriteHarnessRegistry(path string, registry HarnessRegistryConfig) error {
 	return os.Rename(tmpPath, path)
 }
 
-// EnsureHarnessRegistryFile materializes the bundled defaults for editing.
-func EnsureHarnessRegistryFile() (string, error) {
-	path := HarnessRegistryPath()
+// EnsureHarnessRegistryFile materializes the defaults for editing one harness
+// and returns the harness-specific path. On first edit it also materializes a
+// file for every harness that still has none, then retires the legacy
+// single-file registry so per-harness files become authoritative.
+func EnsureHarnessRegistryFile(harnessID string) (string, error) {
+	path := HarnessRegistryPath(harnessID)
 	if _, err := os.Stat(path); err == nil {
+		// Migrate a transitional nested per-harness file to the flat format
+		// before editing, preserving the current mapping.
+		if _, nested, decodeErr := decodePerHarnessFile(path, harnessID); decodeErr == nil && nested {
+			effective, loadErr := LoadHarnessRegistry()
+			if loadErr != nil {
+				return "", loadErr
+			}
+			if err := WriteHarnessFile(path, flatHarnessFile(effective, harnessID)); err != nil {
+				return "", err
+			}
+		}
 		return path, nil
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if err := WriteHarnessRegistry(path, BundledHarnessRegistry()); err != nil {
+	effective, err := LoadHarnessRegistry()
+	if err != nil {
+		return "", err
+	}
+	for _, id := range []string{HarnessCodex, HarnessClaude} {
+		p := HarnessRegistryPath(id)
+		if _, err := os.Stat(p); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		if err := WriteHarnessFile(p, flatHarnessFile(effective, id)); err != nil {
+			return "", err
+		}
+	}
+	if err := retireLegacyHarnessRegistry(); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// retireLegacyHarnessRegistry backs up and removes the pre-per-harness single
+// registry file once per-harness files are materialized.
+func retireLegacyHarnessRegistry() error {
+	legacy := LegacyHarnessRegistryPath()
+	if _, err := os.Stat(legacy); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if err := backupTo(legacy, "migrate", BackupsDir()); err != nil {
+		return err
+	}
+	return os.Remove(legacy)
 }
 
 func harnessProviderWithError(harnessID, providerID string) (HarnessProviderSpec, bool, error) {

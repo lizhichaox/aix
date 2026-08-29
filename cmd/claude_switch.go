@@ -14,10 +14,11 @@ var (
 	claudeEffortFlag string
 	claudeEditFlag   bool
 	claudeDoctorFlag bool
+	claudeEditorFlag string
 )
 
 func claudeRunE(cmd *cobra.Command, args []string) error {
-	if err := validateHarnessAuxiliaryFlags(claudeListFlag, claudeEditFlag, claudeDoctorFlag, len(args)); err != nil {
+	if err := validateHarnessAuxiliaryFlags(claudeListFlag, claudeEditFlag, claudeDoctorFlag, len(args), claudeEditorFlag); err != nil {
 		return err
 	}
 	provider := ""
@@ -25,7 +26,7 @@ func claudeRunE(cmd *cobra.Command, args []string) error {
 		provider = args[0]
 	}
 	if claudeEditFlag {
-		return editHarnessRegistry(internal.HarnessClaude, provider)
+		return editHarnessRegistry(internal.HarnessClaude, provider, claudeEditorFlag)
 	}
 	if claudeDoctorFlag {
 		return runHarnessDoctor(internal.HarnessClaude, provider)
@@ -55,6 +56,7 @@ func addClaudeFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&claudeEffortFlag, "effort", "", "reasoning effort (uses the provider default when omitted)")
 	cmd.Flags().BoolVar(&claudeEditFlag, "edit", false, "edit provider/model/effort mappings")
 	cmd.Flags().BoolVar(&claudeDoctorFlag, "doctor", false, "validate provider/model/effort mappings")
+	cmd.Flags().StringVar(&claudeEditorFlag, "editor", "", "editor to launch for --edit (overrides $VISUAL/$EDITOR)")
 }
 
 func claudeProviderCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

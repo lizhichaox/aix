@@ -177,10 +177,12 @@ registry-driven.
 
 ## Command surface
 
-- Public root commands are limited to `claude`, `codex`, `setup`, `status`,
-  `usage`, and `log`.
+- Public root commands are limited to `claude`, `codex`, `restore`, `setup`,
+  `status`, `usage`, and `log`.
 - Claude and Codex expose only `restore` and `restart` subcommands.
-- Both harnesses expose only `--list`, `--edit`, `--doctor`, and `--effort`.
+- Both harnesses expose only `--list`, `--edit`, `--editor`, `--doctor`, and
+  `--effort`. `--editor` names the editor launched by `--edit` and overrides
+  `$VISUAL` and `$EDITOR`.
 - Keep root help below 50 lines. Do not add compatibility aliases or public
   infrastructure commands without an explicit product decision.
 

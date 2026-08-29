@@ -27,27 +27,29 @@ var claudeRestoreCmd = &cobra.Command{
 	Use:   "restore",
 	Short: "Restore both Claude clients to their native APIs",
 	Args:  cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		code, err := internal.ResolveHarness("claudecode")
-		if err != nil {
-			return err
-		}
-		if err := internal.RestoreNative(code); err != nil {
-			return fmt.Errorf("restore %s: %w", code.Name, err)
-		}
-		if err := internal.SaveAppState("claudecode", ""); err != nil {
-			return fmt.Errorf("save Claude Code state: %w", err)
-		}
-		desktop, err := internal.ResolveHarness("desktop")
-		if err != nil {
-			return err
-		}
-		if err := restoreClaudeDesktopNative(desktop); err != nil {
-			return err
-		}
-		fmt.Println("✓ Claude Code + Claude Desktop restored to their native APIs")
-		return nil
-	},
+	RunE:  runClaudeRestore,
+}
+
+func runClaudeRestore(cmd *cobra.Command, args []string) error {
+	code, err := internal.ResolveHarness("claudecode")
+	if err != nil {
+		return err
+	}
+	if err := internal.RestoreNative(code); err != nil {
+		return fmt.Errorf("restore %s: %w", code.Name, err)
+	}
+	if err := internal.SaveAppState("claudecode", ""); err != nil {
+		return fmt.Errorf("save Claude Code state: %w", err)
+	}
+	desktop, err := internal.ResolveHarness("desktop")
+	if err != nil {
+		return err
+	}
+	if err := restoreClaudeDesktopNative(desktop); err != nil {
+		return err
+	}
+	fmt.Println("✓ Claude Code + Claude Desktop restored to their native APIs")
+	return nil
 }
 
 var claudeRestartCmd = &cobra.Command{
