@@ -29,7 +29,7 @@ func showHarnessProviderMapping(harnessID, providerID string) error {
 	fmt.Printf("  Source:         %s\n\n", harnessRegistrySource(harnessID))
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL KEY\tCLIENT MODEL\tUPSTREAM MODEL\tDEFAULT EFFORT\tEFFORTS")
+	fmt.Fprintln(tw, "MODEL KEY\tCLIENT MODEL\tUPSTREAM MODEL\tDEFAULT EFFORT\tEFFORTS\tCAPABILITIES")
 	ids := make([]string, 0, len(spec.Models))
 	for id := range spec.Models {
 		ids = append(ids, id)
@@ -41,9 +41,31 @@ func showHarnessProviderMapping(harnessID, providerID string) error {
 		if id == spec.DefaultModel {
 			marker = " [default: " + spec.DefaultEffort + "]"
 		}
-		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t%s\n", id, marker, model.ClientModel, model.UpstreamModel, model.DefaultEffort, strings.Join(model.SupportedEfforts, ","))
+		fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\t%s\t%s\n", id, marker, model.ClientModel, model.UpstreamModel, model.DefaultEffort, strings.Join(model.SupportedEfforts, ","), modelCapabilitySummary(harnessID, model))
 	}
 	return tw.Flush()
+}
+
+func modelCapabilitySummary(harnessID string, model internal.HarnessModelSpec) string {
+	if harnessID != internal.HarnessCodex {
+		return "-"
+	}
+	capabilities := make([]string, 0, 4)
+	modalities := model.InputModalities
+	if len(modalities) == 0 {
+		modalities = []string{"text"}
+	}
+	capabilities = append(capabilities, strings.Join(modalities, "+"))
+	if model.SupportsParallelToolCalls {
+		capabilities = append(capabilities, "parallel-tools")
+	}
+	if model.SupportsWebSearch {
+		capabilities = append(capabilities, "web-search")
+	}
+	if model.MultiAgentVersion != "" {
+		capabilities = append(capabilities, "multi-agent-"+model.MultiAgentVersion)
+	}
+	return strings.Join(capabilities, ",")
 }
 
 func harnessRegistrySource(harnessID string) string {

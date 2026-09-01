@@ -37,6 +37,52 @@ func RestoreNative(app *HarnessInfo) error {
 	return nil
 }
 
+var claudeCodeManagedEnvKeys = []string{
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_BASE_URL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+	"CLAUDE_CODE_EFFORT_LEVEL",
+}
+
+type managedSettingSnapshot struct {
+	Present bool        `json:"present"`
+	Value   interface{} `json:"value,omitempty"`
+}
+
+type claudeCodeNativeSnapshot struct {
+	Version int                               `json:"version"`
+	Model   managedSettingSnapshot            `json:"model"`
+	Env     map[string]managedSettingSnapshot `json:"env"`
+}
+
+func saveClaudeCodeNativeSnapshot(settings map[string]interface{}) error {
+	path := ClaudeCodeNativeSnapshotPath()
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	snapshot := claudeCodeNativeSnapshot{
+		Version: 1,
+		Env:     make(map[string]managedSettingSnapshot, len(claudeCodeManagedEnvKeys)),
+	}
+	if model, ok := settings["model"]; ok {
+		snapshot.Model = managedSettingSnapshot{Present: true, Value: model}
+	}
+	env, _ := settings["env"].(map[string]interface{})
+	for _, key := range claudeCodeManagedEnvKeys {
+		value, ok := env[key]
+		snapshot.Env[key] = managedSettingSnapshot{Present: ok, Value: value}
+	}
+	out, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writePrivateFile(path, append(out, '\n'))
+}
+
 func restoreClaudeCodeNative() error {
 	path := ClaudeSettingsPath()
 	existing := make(map[string]interface{})
@@ -52,12 +98,65 @@ func restoreClaudeCodeNative() error {
 	if err := backup(path, "native"); err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
-	delete(existing, "env")
+
+	env, _ := existing["env"].(map[string]interface{})
+	if env == nil {
+		env = make(map[string]interface{})
+	}
+	snapshotPath := ClaudeCodeNativeSnapshotPath()
+	var snapshot claudeCodeNativeSnapshot
+	hasSnapshot := false
+	if snapshotRaw, readErr := os.ReadFile(snapshotPath); readErr == nil {
+		if err := json.Unmarshal(snapshotRaw, &snapshot); err != nil {
+			return fmt.Errorf("parse native Claude Code snapshot: %w", err)
+		}
+		if snapshot.Version != 1 || snapshot.Env == nil {
+			return fmt.Errorf("unsupported native Claude Code snapshot format in %s", snapshotPath)
+		}
+		hasSnapshot = true
+		if snapshot.Model.Present {
+			existing["model"] = snapshot.Model.Value
+		} else {
+			delete(existing, "model")
+		}
+		for _, key := range claudeCodeManagedEnvKeys {
+			field := snapshot.Env[key]
+			if field.Present {
+				env[key] = field.Value
+			} else {
+				delete(env, key)
+			}
+		}
+	} else if !os.IsNotExist(readErr) {
+		return fmt.Errorf("read native Claude Code snapshot: %w", readErr)
+	} else {
+		// Older AIX installations have no field snapshot. Remove only values AIX
+		// is known to own; never discard unrelated user environment variables.
+		for _, key := range claudeCodeManagedEnvKeys {
+			delete(env, key)
+		}
+		if model, _ := existing["model"].(string); model == "sonnet" {
+			delete(existing, "model")
+		}
+	}
+	if len(env) == 0 {
+		delete(existing, "env")
+	} else {
+		existing["env"] = env
+	}
 	out, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	return os.WriteFile(path, append(out, '\n'), 0600)
+	if err := writePrivateFile(path, append(out, '\n')); err != nil {
+		return err
+	}
+	if hasSnapshot {
+		if err := os.Remove(snapshotPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("consume native Claude Code snapshot: %w", err)
+		}
+	}
+	return nil
 }
 
 var desktopGatewayAuthFields = []string{
@@ -86,6 +185,9 @@ type codexNativeSnapshot struct {
 }
 
 func codexNativeSnapshotPath(backupDir string) string {
+	if filepath.Clean(backupDir) == filepath.Clean(BackupsDir()) {
+		return CodexNativeSnapshotPath()
+	}
 	return filepath.Join(filepath.Dir(backupDir), "codex_native.json")
 }
 
@@ -223,15 +325,6 @@ func removeDesktop3pDir() error {
 	}
 	if err := os.Rename(p3pDir, bakDir); err != nil {
 		return fmt.Errorf("back up Claude-3p data: %w", err)
-	}
-	if err := retargetDesktopSessionLinks(p3pDir, bakDir); err != nil {
-		return fmt.Errorf("retarget native session links: %w", err)
-	}
-	if err := bridgeDesktopCodeSessions(
-		filepath.Join(bakDir, "claude-code-sessions"),
-		ClaudeDesktopCodeSessionsDir(),
-	); err != nil {
-		return fmt.Errorf("bridge restored Desktop Code sessions: %w", err)
 	}
 	return nil
 }
@@ -622,25 +715,32 @@ func applyClaudeCodeProvider(providerName string, data map[string]interface{}) e
 	if err := backup(path, providerName); err != nil {
 		return fmt.Errorf("backup failed: %w", err)
 	}
-
-	if envRaw, ok := data["env"]; ok {
-		existing["env"] = envRaw
-	} else {
-		existing["env"] = map[string]interface{}{}
+	if err := saveClaudeCodeNativeSnapshot(existing); err != nil {
+		return fmt.Errorf("save native Claude Code snapshot: %w", err)
 	}
 
-	if envMap, ok := existing["env"].(map[string]interface{}); ok {
-		delete(envMap, "ANTHROPIC_AUTH_TOKEN")
-		// Claude Code 2.1.211+: primaryApiKey in config.json no longer
-		// bypasses OAuth. Only ANTHROPIC_API_KEY env var (source ==
-		// "ANTHROPIC_API_KEY") makes AT() skip the OAuth path. Without
-		// this, users with an expired Claude Pro/Max OAuth session get
-		// "OAuth session expired" before any request reaches the proxy.
-		// The proxy accepts any key from localhost (claudecode bypass),
-		// so a dummy sk-ant-api03- value satisfies CC's local format
-		// check while letting the proxy inject the real upstream token.
-		envMap["ANTHROPIC_API_KEY"] = "sk-ant-api03-aix-proxy-managed"
+	env, _ := existing["env"].(map[string]interface{})
+	if env == nil {
+		env = make(map[string]interface{})
 	}
+	if envRaw, ok := data["env"].(map[string]interface{}); ok {
+		for _, key := range claudeCodeManagedEnvKeys {
+			if value, exists := envRaw[key]; exists {
+				env[key] = value
+			}
+		}
+	}
+	delete(env, "ANTHROPIC_AUTH_TOKEN")
+	// Claude Code 2.1.211+: primaryApiKey in config.json no longer
+	// bypasses OAuth. Only ANTHROPIC_API_KEY env var (source ==
+	// "ANTHROPIC_API_KEY") makes AT() skip the OAuth path. Without
+	// this, users with an expired Claude Pro/Max OAuth session get
+	// "OAuth session expired" before any request reaches the proxy.
+	// The proxy accepts any key from localhost (claudecode bypass),
+	// so a dummy sk-ant-api03- value satisfies CC's local format
+	// check while letting the proxy inject the real upstream token.
+	env["ANTHROPIC_API_KEY"] = "sk-ant-api03-aix-proxy-managed"
+	existing["env"] = env
 
 	if model, ok := data["model"].(string); ok && model != "" {
 		existing["model"] = model
@@ -650,10 +750,7 @@ func applyClaudeCodeProvider(providerName string, data map[string]interface{}) e
 	if err != nil {
 		return fmt.Errorf("marshal %s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
-	}
-	return os.WriteFile(path, append(out, '\n'), 0600)
+	return writePrivateFile(path, append(out, '\n'))
 }
 
 func applyDesktopProvider(providerName string, data map[string]interface{}) error {
@@ -739,9 +836,6 @@ func applyDesktop3pGateway(providerName string, data map[string]interface{}) err
 
 	if err := writeDesktop3pAppConfig(); err != nil {
 		return fmt.Errorf("write Claude-3p config: %w", err)
-	}
-	if err := bridgeDesktopCodeSessions(ClaudeDesktopCodeSessionsDir(), ClaudeDesktop3pCodeSessionsDir()); err != nil {
-		return fmt.Errorf("bridge Desktop Code sessions: %w", err)
 	}
 
 	model, _ := data["model"].(string)

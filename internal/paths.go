@@ -49,6 +49,13 @@ func ClaudeSettingsPath() string {
 	return filepath.Join(HomeDir(), ".claude", "settings.json")
 }
 
+// ClaudeCodeNativeSnapshotPath stores the native values of the settings fields
+// AIX owns while a managed Claude provider is active. The snapshot deliberately
+// excludes every unrelated Claude Code setting and environment variable.
+func ClaudeCodeNativeSnapshotPath() string {
+	return filepath.Join(AixDir(), "claude_code_native.json")
+}
+
 // ClaudeConfigJSONPath returns Claude Code/Desktop's primary config file.
 // Claude 2.x persists the active per-session model here (in
 // clientDataCacheSlots) rather than in settings.json.
@@ -77,6 +84,12 @@ func ClaudeProjectsDir() string {
 
 func CodexConfigPath() string {
 	return filepath.Join(HomeDir(), ".codex", "config.toml")
+}
+
+// CodexNativeSnapshotPath stores the AIX-owned native Codex fields while a
+// managed provider is active.
+func CodexNativeSnapshotPath() string {
+	return filepath.Join(AixDir(), "codex_native.json")
 }
 
 // CodexModelsPath is the user-managed catalog shared by the Codex CLI, app,

@@ -49,6 +49,73 @@ func TestApplyDeepSeekClaudeCode(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeApplyAndRestorePreserveUserSettings(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(ClaudeSettingsPath()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	original := map[string]interface{}{
+		"model": "opus",
+		"hooks": map[string]interface{}{"enabled": true},
+		"env": map[string]interface{}{
+			"USER_SETTING":         "keep",
+			"ANTHROPIC_BASE_URL":   "https://native.example.test",
+			"ANTHROPIC_AUTH_TOKEN": "native-token",
+		},
+	}
+	if err := writeJSON(ClaudeSettingsPath(), original); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureProviderTemplate("claudecode", "deepseek"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyDeepSeekClaudeCode(DeepSeekV4FlashModel); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var managed map[string]interface{}
+	if err := readJSONInto(ClaudeSettingsPath(), &managed); err != nil {
+		t.Fatal(err)
+	}
+	managedEnv, _ := managed["env"].(map[string]interface{})
+	if managedEnv["USER_SETTING"] != "keep" {
+		t.Fatalf("unrelated env setting was overwritten: %#v", managedEnv)
+	}
+	if managed["hooks"] == nil {
+		t.Fatal("unrelated top-level settings were overwritten")
+	}
+	// Simulate a user adding another unrelated setting while AIX is active.
+	managedEnv["ADDED_WHILE_MANAGED"] = "keep-too"
+	if err := writeJSON(ClaudeSettingsPath(), managed); err != nil {
+		t.Fatal(err)
+	}
+
+	app, err := ResolveHarness("claudecode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := RestoreNative(app); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	var restored map[string]interface{}
+	if err := readJSONInto(ClaudeSettingsPath(), &restored); err != nil {
+		t.Fatal(err)
+	}
+	restoredEnv, _ := restored["env"].(map[string]interface{})
+	if restored["model"] != "opus" || restoredEnv["ANTHROPIC_BASE_URL"] != "https://native.example.test" || restoredEnv["ANTHROPIC_AUTH_TOKEN"] != "native-token" {
+		t.Errorf("native AIX-owned fields were not restored: %#v", restored)
+	}
+	if restoredEnv["USER_SETTING"] != "keep" || restoredEnv["ADDED_WHILE_MANAGED"] != "keep-too" || restored["hooks"] == nil {
+		t.Errorf("unrelated settings were not preserved: %#v", restored)
+	}
+	if _, err := os.Stat(ClaudeCodeNativeSnapshotPath()); !os.IsNotExist(err) {
+		t.Errorf("native snapshot should be consumed after restore: %v", err)
+	}
+}
+
 func TestApplyDynamicDeepSeekClaudeCodeUses1M(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if err := EnsureDirs(); err != nil {

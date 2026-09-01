@@ -22,6 +22,81 @@ func TestDeepSeekAPIKeyPrefersEnv(t *testing.T) {
 	}
 }
 
+func TestCatalogCapabilitiesComeFromHarnessRegistry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	registry := BundledHarnessRegistry()
+	provider := registry.Providers["openrouter"]
+	spec := provider.Harnesses[HarnessCodex]
+	model := spec.Models["deepseek/deepseek-v4-flash-vision-exp"]
+	model.SupportsParallelToolCalls = true
+	model.SupportsWebSearch = true
+	model.MultiAgentVersion = "v1"
+	spec.Models["deepseek/deepseek-v4-flash-vision-exp"] = model
+	provider.Harnesses[HarnessCodex] = spec
+	registry.Providers["openrouter"] = provider
+	if err := WriteHarnessFile(HarnessRegistryPath(HarnessCodex), flatHarnessFile(registry, HarnessCodex)); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := writeNativeModelCatalog("openrouter", path, model.ClientModel); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]interface{} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range catalog.Models {
+		if entry["slug"] != model.ClientModel {
+			continue
+		}
+		if entry["supports_parallel_tool_calls"] != true || entry["supports_search_tool"] != true || entry["multi_agent_version"] != "v1" {
+			t.Fatalf("catalog ignored registry capabilities: %#v", entry)
+		}
+		modalities, _ := entry["input_modalities"].([]interface{})
+		if len(modalities) != 2 || modalities[0] != "text" || modalities[1] != "image" {
+			t.Fatalf("catalog modalities = %#v, want text+image", modalities)
+		}
+		return
+	}
+	t.Fatalf("catalog missing %q", model.ClientModel)
+}
+
+func TestCatalogOmitsUnsupportedWebSearchToolType(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := EnsureDirs(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "models.json")
+	if err := writeNativeModelCatalog("opencode-go", path, DeepSeekV4VisionModel); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Models []map[string]json.RawMessage `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range catalog.Models {
+		if value, present := entry["web_search_tool_type"]; present {
+			t.Fatalf("unsupported web_search_tool_type must be omitted, got %s", value)
+		}
+	}
+}
+
 func TestResolveCodexDeepSeekModel(t *testing.T) {
 	if got, err := ResolveCodexDeepSeekModel(""); err != nil || got != DeepSeekV4VisionModel {
 		t.Fatalf("default model = (%q, %v), want %q", got, err, DeepSeekV4VisionModel)

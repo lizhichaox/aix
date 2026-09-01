@@ -101,6 +101,21 @@ func DiagnoseHarnessRegistry(harnessID, providerID string) []HarnessDiagnostic {
 			if model.ContextWindow < 0 {
 				diagnostics = append(diagnostics, HarnessDiagnostic{Severity: "error", Path: modelPath + ".context_window", Reason: "context window cannot be negative", Suggest: "set zero when unknown or a positive token count"})
 			}
+			if harnessID == HarnessCodex {
+				if len(model.InputModalities) > 0 && !containsString(model.InputModalities, "text") {
+					diagnostics = append(diagnostics, HarnessDiagnostic{Severity: "error", Path: modelPath + ".input_modalities", Reason: "Codex models must include text input", Suggest: "include text, and add image only when the upstream model has been verified for image input"})
+				}
+				for _, modality := range model.InputModalities {
+					if modality != "text" && modality != "image" {
+						diagnostics = append(diagnostics, HarnessDiagnostic{Severity: "error", Path: modelPath + ".input_modalities", Reason: fmt.Sprintf("unsupported input modality %q", modality), Suggest: "use text or image"})
+					}
+				}
+				if model.MultiAgentVersion != "" && model.MultiAgentVersion != "v1" && model.MultiAgentVersion != "v2" {
+					diagnostics = append(diagnostics, HarnessDiagnostic{Severity: "error", Path: modelPath + ".multi_agent_version", Reason: fmt.Sprintf("unsupported multi-agent version %q", model.MultiAgentVersion), Suggest: "use v1, v2, or leave empty when unverified"})
+				}
+			} else if len(model.InputModalities) > 0 || model.SupportsParallelToolCalls || model.SupportsWebSearch || model.MultiAgentVersion != "" {
+				diagnostics = append(diagnostics, HarnessDiagnostic{Severity: "warning", Path: modelPath, Reason: "Codex catalog capability fields are ignored by the Claude harness", Suggest: "remove input_modalities, supports_parallel_tool_calls, supports_web_search, and multi_agent_version from this Claude mapping"})
+			}
 		}
 
 		if _, ok := bundledHarnessProvider(harnessID, id); !ok {

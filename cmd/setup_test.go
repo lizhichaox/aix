@@ -51,3 +51,31 @@ func TestSetupWithoutCredentialsStaysNonDestructive(t *testing.T) {
 		t.Fatal("setup must not install a gateway service without credentials")
 	}
 }
+
+func TestSetupHarnessProviderSelectionIsUnambiguous(t *testing.T) {
+	configured := []string{"deepseek"}
+	if got := setupHarnessProvider(configured, ""); got != "deepseek" {
+		t.Errorf("native harness with one credential selected %q", got)
+	}
+	if got := setupHarnessProvider([]string{"deepseek", "openrouter"}, ""); got != "" {
+		t.Errorf("native harness with multiple credentials should stay native, got %q", got)
+	}
+	if got := setupHarnessProvider([]string{"deepseek", "openrouter"}, "openrouter"); got != "openrouter" {
+		t.Errorf("existing configured selection = %q, want openrouter", got)
+	}
+	if got := setupHarnessProvider(configured, "missing"); got != "" {
+		t.Errorf("unavailable existing selection should not be guessed, got %q", got)
+	}
+}
+
+func TestSetupClaudeProviderRequiresUnifiedState(t *testing.T) {
+	configured := []string{"deepseek", "openrouter"}
+	state := &internal.State{Apps: map[string]string{"claudecode": "deepseek", "desktop": "deepseek"}}
+	if got := setupClaudeProvider(configured, state); got != "deepseek" {
+		t.Errorf("unified Claude state = %q, want deepseek", got)
+	}
+	state.Apps["desktop"] = "openrouter"
+	if got := setupClaudeProvider(configured, state); got != "" {
+		t.Errorf("split Claude state must not be auto-applied, got %q", got)
+	}
+}

@@ -45,26 +45,30 @@ const deepSeekV4ContextWindow = 1048576
 
 // NativeModelSpec describes one model in a native provider's Codex catalog.
 type NativeModelSpec struct {
-	Slug          string
-	DisplayName   string
-	Description   string
-	Priority      int
-	ContextWindow int
+	Slug            string
+	DisplayName     string
+	Description     string
+	Priority        int
+	ContextWindow   int
+	InputModalities []string
 }
 
 // NativeProviderSpec describes a provider that exposes a native Responses API
 // for passthrough through the AIX gateway. Adding one is a single registry
 // entry plus an optional catalog metadata factory.
 type NativeProviderSpec struct {
-	ID              string
-	Name            string
-	EnvKey          string
-	EnvKeyAliases   []string
-	BaseURL         string
-	DefaultModel    string
-	Models          []NativeModelSpec
-	AllowAnyModel   bool
-	CatalogMetadata func(model string) map[string]interface{}
+	ID                        string
+	Name                      string
+	EnvKey                    string
+	EnvKeyAliases             []string
+	BaseURL                   string
+	DefaultModel              string
+	Models                    []NativeModelSpec
+	AllowAnyModel             bool
+	CatalogMetadata           func(model string) map[string]interface{}
+	SupportsParallelToolCalls bool
+	SupportsWebSearch         bool
+	MultiAgentVersion         string
 }
 
 // openCodeZenModels are the OpenCode Zen models served through the Responses
@@ -100,7 +104,7 @@ var openCodeGoModels = []NativeModelSpec{
 	{Slug: "glm-5.2", DisplayName: "GLM 5.2", Description: "Zhipu's frontier coding model on the Go subscription.", Priority: 5},
 	{Slug: "qwen3.8-max", DisplayName: "Qwen3.8 Max", Description: "Qwen's frontier model on the Go subscription.", Priority: 6},
 	{Slug: "minimax-m3", DisplayName: "MiniMax M3", Description: "MiniMax's flagship model on the Go subscription.", Priority: 7},
-	{Slug: DeepSeekV4VisionModel, DisplayName: "DeepSeek V4 Flash Vision Exp", Description: "DeepSeek's experimental vision model on the Go subscription.", Priority: 8, ContextWindow: deepSeekV4ContextWindow},
+	{Slug: DeepSeekV4VisionModel, DisplayName: "DeepSeek V4 Flash Vision Exp", Description: "DeepSeek's experimental vision model on the Go subscription.", Priority: 8, ContextWindow: deepSeekV4ContextWindow, InputModalities: []string{"text", "image"}},
 }
 
 // openRouterModels are a curated subset of OpenRouter's model catalog, kept
@@ -112,7 +116,7 @@ var openRouterModels = []NativeModelSpec{
 	{Slug: "deepseek/deepseek-v4-pro", DisplayName: "DeepSeek V4 Pro", Description: "DeepSeek's most capable coding model routed through OpenRouter.", Priority: 1, ContextWindow: deepSeekV4ContextWindow},
 	{Slug: "deepseek/deepseek-v4-flash", DisplayName: "DeepSeek V4 Flash", Description: "DeepSeek's fast agentic coding model routed through OpenRouter.", Priority: 2, ContextWindow: deepSeekV4ContextWindow},
 	{Slug: "~deepseek/deepseek-v4-flash-latest", DisplayName: "DeepSeek V4 Flash Latest", Description: "DeepSeek's latest agentic coding model routed through OpenRouter.", Priority: 3, ContextWindow: deepSeekV4ContextWindow},
-	{Slug: "deepseek/deepseek-v4-flash-vision-exp", DisplayName: "DeepSeek V4 Flash Vision Exp", Description: "DeepSeek's experimental vision model routed through OpenRouter.", Priority: 4, ContextWindow: deepSeekV4ContextWindow},
+	{Slug: "deepseek/deepseek-v4-flash-vision-exp", DisplayName: "DeepSeek V4 Flash Vision Exp", Description: "DeepSeek's experimental vision model routed through OpenRouter.", Priority: 4, ContextWindow: deepSeekV4ContextWindow, InputModalities: []string{"text", "image"}},
 	{Slug: "stealth/ox-alpha", DisplayName: "Stealth Ox Alpha", Description: "Stealth's frontier reasoning model routed through OpenRouter.", Priority: 5},
 }
 
@@ -148,7 +152,7 @@ func NativeProviderSpecs() map[string]NativeProviderSpec {
 			Models: []NativeModelSpec{
 				{Slug: DeepSeekV4FlashModel, DisplayName: "DeepSeek-V4-Flash", Description: "Latest frontier agentic coding model.", Priority: 1},
 				{Slug: DeepSeekV4ProModel, DisplayName: "DeepSeek-V4-Pro", Description: "Most capable frontier agentic coding model.", Priority: 2},
-				{Slug: DeepSeekV4VisionModel, DisplayName: "DeepSeek-V4-Flash-Vision", Description: "Latest frontier agentic coding model with image input.", Priority: 3},
+				{Slug: DeepSeekV4VisionModel, DisplayName: "DeepSeek-V4-Flash-Vision", Description: "Latest frontier agentic coding model with image input.", Priority: 3, InputModalities: []string{"text", "image"}},
 			},
 			CatalogMetadata: func(model string) map[string]interface{} {
 				return deepSeekV4Metadata(model, codexBaseInstructions)
@@ -853,7 +857,7 @@ func writeNativeModelCatalog(providerID, path, activeModel string) error {
 		} else if spec.CatalogMetadata != nil {
 			metadata = spec.CatalogMetadata(slug)
 		}
-		applyHarnessEffortMetadata(metadata, mapped.SupportedEfforts, mapped.DefaultEffort)
+		applyCatalogHarnessMetadata(providerID, slug, metadata)
 		raw, err := json.Marshal(metadata)
 		if err != nil {
 			return err
@@ -872,6 +876,7 @@ func writeNativeModelCatalog(providerID, path, activeModel string) error {
 		if spec.CatalogMetadata != nil {
 			metadata = spec.CatalogMetadata(activeModel)
 		}
+		applyCatalogHarnessMetadata(providerID, activeModel, metadata)
 		raw, err := json.Marshal(metadata)
 		if err != nil {
 			return err
@@ -913,6 +918,60 @@ func applyHarnessEffortMetadata(metadata map[string]interface{}, efforts []strin
 		defaultEffort = efforts[0]
 	}
 	metadata["default_reasoning_level"] = defaultEffort
+}
+
+// applyCatalogHarnessMetadata makes the editable Codex harness registry the
+// authoritative source for model effort and capability claims. Catalog
+// factories may provide richer descriptive metadata, but they cannot silently
+// advertise web search, parallel tools, multi-agent support, or modalities
+// that the effective provider/model mapping has not declared.
+func applyCatalogHarnessMetadata(providerID, model string, metadata map[string]interface{}) {
+	harness, ok := HarnessProvider(HarnessCodex, providerID)
+	if !ok {
+		return
+	}
+	var mapped HarnessModelSpec
+	found := false
+	for id, candidate := range harness.Models {
+		if id == model || candidate.ClientModel == model || candidate.UpstreamModel == model {
+			mapped = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		if selection, err := ResolveHarnessSelection(HarnessCodex, providerID, model, ""); err == nil {
+			applyHarnessEffortMetadata(metadata, selection.SupportedEfforts, selection.Effort)
+		}
+		metadata["input_modalities"] = []string{"text"}
+		metadata["supports_image_detail_original"] = false
+		metadata["supports_parallel_tool_calls"] = false
+		metadata["supports_search_tool"] = false
+		delete(metadata, "web_search_tool_type")
+		metadata["multi_agent_version"] = nil
+		return
+	}
+	applyHarnessEffortMetadata(metadata, mapped.SupportedEfforts, mapped.DefaultEffort)
+	modalities := append([]string(nil), mapped.InputModalities...)
+	if len(modalities) == 0 {
+		modalities = []string{"text"}
+	}
+	metadata["input_modalities"] = modalities
+	metadata["supports_image_detail_original"] = containsString(modalities, "image")
+	metadata["supports_parallel_tool_calls"] = mapped.SupportsParallelToolCalls
+	metadata["supports_search_tool"] = mapped.SupportsWebSearch
+	if mapped.SupportsWebSearch {
+		metadata["web_search_tool_type"] = "text"
+	} else {
+		// Codex Desktop 0.151 rejects JSON null here. The field is optional,
+		// but when present its value must deserialize as a string or object.
+		delete(metadata, "web_search_tool_type")
+	}
+	if mapped.MultiAgentVersion == "" {
+		metadata["multi_agent_version"] = nil
+	} else {
+		metadata["multi_agent_version"] = mapped.MultiAgentVersion
+	}
 }
 
 // SyncLiveModelCatalog fetches the provider's live /models catalog and
@@ -981,10 +1040,14 @@ func writeLiveModelCatalog(spec NativeProviderSpec, path, activeModel string, re
 	}
 	entries := make([]catalogModel, 0, len(remote)+1)
 	for _, m := range remote {
-		entries = append(entries, catalogModel{slug: m.ID, metadata: liveCatalogMetadata(known, m)})
+		metadata := liveCatalogMetadata(known, m)
+		applyCatalogHarnessMetadata(spec.ID, m.ID, metadata)
+		entries = append(entries, catalogModel{slug: m.ID, metadata: metadata})
 	}
 	if activeModel != "" && !containsRemoteModel(remote, activeModel) && nativeModelInList(spec, activeModel) {
-		entries = append(entries, catalogModel{slug: activeModel, metadata: liveCatalogMetadata(known, RemoteModel{ID: activeModel})})
+		metadata := liveCatalogMetadata(known, RemoteModel{ID: activeModel})
+		applyCatalogHarnessMetadata(spec.ID, activeModel, metadata)
+		entries = append(entries, catalogModel{slug: activeModel, metadata: metadata})
 	}
 	// Deterministic output: curated priority first (unknown slugs sort last),
 	// then slug for stable diffs.
@@ -1158,7 +1221,7 @@ func isDeepSeekV4Model(model string) bool {
 // modelCatalogMetadata renders the catalog entry for a model of a native
 // provider, looking up display name/description/priority from the provider's
 // model list (unknown slugs fall back to the slug itself, so AllowAnyModel
-// providers can still get a usable entry). Codex 0.147+ makes
+// providers can still get a usable entry). Current Codex builds make
 // `base_instructions` a required field, so the entry embeds AIX's own
 // system-prompt template (assets/codex_base_instructions.txt). Capability
 // fields follow the interoperable shape DeepSeek's setup script publishes; the
@@ -1246,7 +1309,7 @@ func codexCompatibleCatalogMetadata(model, displayName, description, baseInstruc
 }
 
 // nativeReasoningLevels is the reasoning-effort shape the Codex client
-// surfaces in its effort picker. Codex 0.148+ desktop builds read
+// surfaces in its effort picker. Current Codex desktop builds read
 // `supported_reasoning_levels` and `default_reasoning_level` from the
 // `model_catalog_json` file through the app-server `models list` API, so
 // every catalog entry we write needs them for the effort selector to appear.
@@ -1260,7 +1323,7 @@ var nativeReasoningLevels = []map[string]string{
 // providers that do not supply a rich metadata factory (user-defined native
 // providers from ~/.aix/native.toml and arbitrary AllowAnyModel overrides).
 // Besides the identity fields it carries the reasoning-effort and visibility
-// fields so Codex 0.148+ desktop surfaces the model name and an effort picker
+// fields so Codex desktop surfaces the model name and an effort picker
 // just like the curated providers; the default matches the
 // The effective harness registry supplies the selected model's supported and
 // default reasoning effort metadata.

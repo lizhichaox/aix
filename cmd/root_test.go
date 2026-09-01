@@ -53,7 +53,8 @@ func TestVersionOutputDescribesPurposeAndCommands(t *testing.T) {
 	for _, want := range []string{
 		"AIX v",
 		"Switch AI providers, models, and reasoning effort across AI harnesses while",
-		"keeping your conversations ready to continue across every switch.",
+		"preserving client-owned conversation data. Session visibility follows the",
+		"storage mode supported by each harness.",
 		"aix status",
 		"aix restore",
 		"aix claude <provider> [model] [effort]",
