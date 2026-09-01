@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.11.9 (2026-09-01)
+
+- Stopped retagging Codex rollout files and the Codex thread database during
+  provider switches and native restore. Sessions now retain the provider that
+  created them, preventing incompatible cross-provider Responses compaction.
+  Successful switches now explain that incompatible history can be continued
+  safely from a new session that reads the previous session's context.
+- Made setup initialize credentials, routes, templates, and the gateway without
+  selecting a provider or restarting Codex or Claude. Client lifecycle changes
+  now happen only after an explicit switch, restore, or restart command.
+- Added active-Claude-task guards to Claude switch, restore, and restart paths
+  so a Claude-hosted command cannot terminate its own desktop host.
+- Kept Claude Desktop third-party history visible after native restore by
+  projecting only missing opaque session index entries into the active native
+  identity, without overwriting entries or merging the preserved data stores.
+
 ## v0.11.8 (2026-09-01)
 
 - Made Claude provider switches and native restore transactional across Claude

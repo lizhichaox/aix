@@ -178,6 +178,9 @@ func emptyAsNative(value string) string {
 
 // switchClaudeProvider applies one selection to both Claude clients.
 func switchClaudeProvider(provider, model, effort string) (retErr error) {
+	if err := requireExternalClaudeLifecycle(); err != nil {
+		return err
+	}
 	if !validClaudeProvider(provider) {
 		return fmt.Errorf("unknown Claude provider %q (available: %s)", provider, strings.Join(claudeProviderIDs(), ", "))
 	}

@@ -5,8 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/lizhichaox/aix/internal"
 )
 
 func clearNativeProviderKeys(t *testing.T) {
@@ -83,8 +81,8 @@ func TestCodexProviderCommandSwitchesWithDefaultModel(t *testing.T) {
 	clearNativeProviderKeys(t)
 	codexListFlag = false
 	// One argument must attempt a switch to the provider's default model; with
-	// no API key configured the apply fails before any app restart or history
-	// sync, proving the command no longer just lists models.
+	// no API key configured the apply fails before any app restart, proving the
+	// command no longer just lists models.
 	rootCmd.SetArgs([]string{"codex", "opencode-go"})
 	err := rootCmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "API key not found") {
@@ -108,31 +106,18 @@ func TestCodexBareCommandListsProviders(t *testing.T) {
 	}
 }
 
-func TestSyncHistoryAfterSwitch(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	clearNativeProviderKeys(t)
-	sessionsDir := internal.CodexSessionsDir()
-	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	root := `{"timestamp":"2026-08-06T02:00:00Z","type":"session_meta","payload":{"session_id":"auto-sync-1","id":"auto-sync-1","model_provider":"deepseek","cwd":"/proj/aix"}}` + "\n"
-	if err := os.WriteFile(sessionsDir+"/rollout-auto-sync-1.jsonl", []byte(root), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	out := captureStdout(t, func() {
-		syncHistoryAfterSwitch("opencode-go")
-	})
-	if !strings.Contains(out, "conversation history synced to \"opencode-go\"") ||
-		!strings.Contains(out, "1 threads") {
-		t.Errorf("auto-sync output unexpected:\n%s", out)
-	}
-	raw, err := os.ReadFile(sessionsDir + "/rollout-auto-sync-1.jsonl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"model_provider":"opencode-go"`) {
-		t.Errorf("rollout was not retagged:\n%s", raw)
+func TestCodexSessionCompatibilityNotice(t *testing.T) {
+	out := captureStdout(t, printCodexSessionCompatibilityNotice)
+	for _, want := range []string{
+		"previous sessions remain readable",
+		"continuing one directly",
+		"start a new session",
+		"read the previous session's",
+		"may improve in the future",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("compatibility notice missing %q:\n%s", want, out)
+		}
 	}
 }
 

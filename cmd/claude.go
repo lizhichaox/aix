@@ -31,6 +31,9 @@ var claudeRestoreCmd = &cobra.Command{
 }
 
 func runClaudeRestore(cmd *cobra.Command, args []string) (retErr error) {
+	if err := requireExternalClaudeLifecycle(); err != nil {
+		return err
+	}
 	code, err := internal.ResolveHarness("claudecode")
 	if err != nil {
 		return err
@@ -83,6 +86,7 @@ func runClaudeRestore(cmd *cobra.Command, args []string) (retErr error) {
 	committed = true
 	fmt.Println("Launching Claude... done")
 	fmt.Println("✓ Claude Code + Claude Desktop restored to their native APIs")
+	fmt.Println("  Third-party Desktop sessions remain preserved and missing history entries are shown in native mode.")
 	return nil
 }
 
