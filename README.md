@@ -2,8 +2,8 @@
 
 AIX switches providers, models, and reasoning effort across AI harnesses while
 preserving client-owned conversation data. Codex and Claude Code sessions stay
-resumable across provider changes; Claude Desktop preserves its native and
-third-party conversation stores separately.
+resumable with the provider that created them; Claude Desktop preserves its
+native and third-party conversation stores separately.
 
 ```bash
 aix claude opencode-go
@@ -15,9 +15,9 @@ on-demand `aix usage` command displays native subscription allowance and
 supported provider balances reported directly by OpenAI or Anthropic. Fresh
 results are cached briefly so aggressive polling does not trigger provider
 rate limits; the cache stores only provider-reported snapshots, never
-credentials or an AIX-computed usage total. For Codex, AIX synchronizes
-provider tags across provider changes without deleting or rewriting the
-conversation itself.
+credentials or an AIX-computed usage total. AIX treats Codex session files and
+the Codex thread database as client-owned data and never retags or rewrites
+them during provider changes.
 
 The default model and effort come from harness-specific registry files, one
 per harness, at `~/.aix/harnesses-codex.toml` and
@@ -57,7 +57,9 @@ export OPENROUTER_API_KEY="..."
 `OPENCODE_API_KEY` is also accepted as a shared fallback for OpenCode Zen and
 OpenCode Go. `aix setup` reports missing credentials without prompting and
 stores configured provider credentials in `~/.aix/proxy.toml` with restricted
-file permissions.
+file permissions. Setup does not select a provider or restart Codex or Claude;
+use an explicit `aix codex <provider>` or `aix claude <provider>` command when
+you are ready to switch.
 
 ## Commands
 
@@ -175,18 +177,24 @@ shape.
 - Claude provider changes are applied to Code and Desktop as one operation.
 - Claude Desktop is restarted automatically after a switch. Use
   `aix claude restart` to re-apply the active configuration manually.
-- The AIX gateway is private infrastructure; setup and managed provider switches
-  manage its service lifecycle automatically.
+- The AIX gateway is private infrastructure. Setup prepares credentials, routes,
+  and the service without changing a harness selection or restarting a client.
+  Only an explicit provider switch, restore, or restart manages client lifecycle.
 - Codex sends managed-provider Responses traffic through an isolated gateway
   route. `aix codex restore` bypasses the gateway and restores OpenAI native.
 - Run Codex switch, restore, and restart commands from an external terminal.
   AIX rejects these lifecycle commands inside an active Codex task so the task
   cannot terminate the desktop host that is executing it.
-- Codex history tags are synchronized automatically after provider changes;
-  conversation contents are never deleted or rewritten.
+- Codex sessions retain the provider that created them. AIX never retags rollout
+  files or the Codex thread database during provider changes. A session remains
+  readable after a switch, but direct continuation may fail when provider
+  histories are incompatible; start a new session and have it read the previous
+  session's context to continue the work.
 - Claude Desktop's native and third-party data directories are preserved as
-  opaque stores. AIX never merges, rewrites, or symlinks client-owned session
-  metadata. Returning to a mode restores its complete previous store.
+  opaque stores. AIX never merges, rewrites, or symlinks their contents.
+  Native restore copies only missing opaque session index entries into the
+  native identity so third-party history remains visible; existing entries are
+  never overwritten and continuation is not guaranteed across providers.
 - Configuration changes are backed up under `~/.aix/backups/`.
 
 The gateway listens on `127.0.0.1:2026` by default. AIX sends requests only to
@@ -202,10 +210,10 @@ submitted by the harness; AIX itself has no telemetry or analytics service.
   use an upstream-native counting endpoint when one becomes available without
   introducing protocol translation or local usage accounting.
 - Claude Desktop keeps separate native and third-party session indexes. AIX
-  preserves both stores so conversations remain available when returning to
-  their original mode, but it does not mutate the closed-source session index
-  to make every conversation appear simultaneously in both modes. Claude Code
-  project transcripts remain owned and resumed by Claude Code itself.
+  preserves both stores and projects missing third-party index entries into
+  native mode for visibility only. It does not merge transcript contents or
+  guarantee cross-provider continuation. Claude Code project transcripts remain
+  owned and resumed by Claude Code itself.
 
 ## Configuration files
 

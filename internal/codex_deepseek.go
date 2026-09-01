@@ -28,15 +28,13 @@ const (
 
 // DefaultOpenAICodexModel is the model id recorded in ~/.codex/config.toml
 // when AIX restores Codex to its default native OpenAI provider. Codex reads
-// model_provider + model together; leaving model empty would let the host pick
-// one, but retagging conversation history to openai needs a concrete,
-// user-visible id so restored sessions load under the ChatGPT account.
+// model_provider + model together, so restore writes a concrete user-visible
+// native selection instead of relying on a host-version-dependent fallback.
 //
 // It is the canonical Codex default slug for the gpt-5.6 family, not the bare
 // "gpt-5.6" family alias. Codex's OpenAI provider catalog lists only
-// gpt-5.6-sol / -terra / -luna (plus older gpt-5.x slugs); the bare alias
-// resolves at config-load time but is not a catalog slug, so a thread whose
-// model was retagged to it fails on resume with "model is not supported".
+// gpt-5.6-sol / -terra / -luna (plus older gpt-5.x slugs); the bare alias may
+// resolve at config-load time but is not a stable catalog slug.
 const DefaultOpenAICodexModel = "gpt-5.6-sol"
 
 // deepSeekV4ContextWindow is the documented native context window of the

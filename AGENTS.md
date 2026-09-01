@@ -8,8 +8,9 @@ and TOML. The current release version is defined in `cmd/root.go`.
 
 ## Product boundaries
 
-- Preserve conversation history. Provider switching may update configuration
-  and Codex history tags, but must not rewrite or delete session contents.
+- Preserve conversation history. Provider switching may update harness
+  configuration, but must not rewrite, retag, delete, or re-index client-owned
+  Codex session contents. A session retains the provider that created it.
 - Codex CLI and Codex Desktop are one harness. Managed provider switches use
   the provider's native Responses protocol through the private AIX gateway;
   restore returns Codex to its OpenAI-native direct connection.
@@ -31,7 +32,10 @@ and TOML. The current release version is defined in `cmd/root.go`.
   provider-reported snapshots briefly to avoid provider rate limits; the cache
   stores only provider-reported values and no credentials or AIX-computed
   usage totals.
-- Do not add closed-source client integrations or mutate client session files.
+- Do not add closed-source client integrations or mutate client session
+  contents. Claude Desktop restore may copy missing opaque `local_*.json`
+  session index entries into the active native identity solely for visibility;
+  it must never overwrite an existing entry or alter the preserved 3p store.
 
 All code comments, documentation, commit messages, and CLI output must be in
 English.
@@ -96,8 +100,8 @@ sandbox permission failures from code failures.
 - The bottom-left Codex login label and the composer model label are different
   surfaces: the former comes from `model_providers.<active>.name`, the latter
   from catalog `display_name`.
-- Provider switches and restore synchronize Codex history tags through the
-  existing `sync-history` path and auto-restart the host app when applicable.
+- Provider switches and restore never mutate Codex history tags or the Codex
+  thread database. They auto-restart the host app when applicable.
 
 ### Claude
 
@@ -133,6 +137,9 @@ sandbox permission failures from code failures.
 - `desktop_native.json` is the temporary native-config snapshot. A managed
   Claude provider switch creates it and `aix claude restore` consumes it.
   Restore must also handle the `Claude-3p` directory.
+- Native restore projects only missing opaque `local_*.json` entries from the
+  preserved 3p store into the active native account/org directory so history
+  remains visible. Never overwrite native entries or promise continuation.
 - Desktop rewrites its config on quit. Restart order must remain quit →
   re-apply gateway config → launch, using the helpers in
   `cmd/app_restart.go`.
@@ -145,7 +152,9 @@ sandbox permission failures from code failures.
   unknown provider.
 - Back up before mutation and prune backups only after a successful apply or
   restore. Never delete user session data.
-- `setup` must apply configurations, not merely record state.
+- `setup` initializes credentials, provider routes, templates, and the gateway
+  service without selecting a provider or restarting a harness. Only explicit
+  switch, restore, and restart commands may manage client lifecycle.
 - `setup` and `install.sh` must never block on credential input. Report each
   missing credential and continue; if none are configured, print a prominent
   warning and exit successfully after initializing AIX.

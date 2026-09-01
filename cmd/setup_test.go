@@ -52,30 +52,27 @@ func TestSetupWithoutCredentialsStaysNonDestructive(t *testing.T) {
 	}
 }
 
-func TestSetupHarnessProviderSelectionIsUnambiguous(t *testing.T) {
-	configured := []string{"deepseek"}
-	if got := setupHarnessProvider(configured, ""); got != "deepseek" {
-		t.Errorf("native harness with one credential selected %q", got)
-	}
-	if got := setupHarnessProvider([]string{"deepseek", "openrouter"}, ""); got != "" {
-		t.Errorf("native harness with multiple credentials should stay native, got %q", got)
-	}
-	if got := setupHarnessProvider([]string{"deepseek", "openrouter"}, "openrouter"); got != "openrouter" {
-		t.Errorf("existing configured selection = %q, want openrouter", got)
-	}
-	if got := setupHarnessProvider(configured, "missing"); got != "" {
-		t.Errorf("unavailable existing selection should not be guessed, got %q", got)
-	}
-}
+func TestSetupWithCredentialLeavesHarnessesUnchanged(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	clearNativeProviderKeys(t)
+	t.Setenv("DEEPSEEK_API_KEY", "setup-test-key")
 
-func TestSetupClaudeProviderRequiresUnifiedState(t *testing.T) {
-	configured := []string{"deepseek", "openrouter"}
-	state := &internal.State{Apps: map[string]string{"claudecode": "deepseek", "desktop": "deepseek"}}
-	if got := setupClaudeProvider(configured, state); got != "deepseek" {
-		t.Errorf("unified Claude state = %q, want deepseek", got)
+	out := captureStdout(t, func() {
+		if err := runSetup(setupCmd, nil); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !strings.Contains(out, "Harness selections were left unchanged") ||
+		!strings.Contains(out, "aix codex <provider>") {
+		t.Fatalf("setup did not explain the explicit-switch boundary:\n%s", out)
 	}
-	state.Apps["desktop"] = "openrouter"
-	if got := setupClaudeProvider(configured, state); got != "" {
-		t.Errorf("split Claude state must not be auto-applied, got %q", got)
+	for _, path := range []string{
+		internal.CodexConfigPath(),
+		internal.ClaudeSettingsPath(),
+		internal.ClaudeDesktopConfigPath(),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("setup mutated harness config %s (stat err: %v)", path, err)
+		}
 	}
 }

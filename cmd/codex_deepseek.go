@@ -77,11 +77,10 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 	if key == "" {
 		return fmt.Errorf("%s API key not found; set $%s or add an auth_token for %q to proxy.toml", spec.Name, spec.EnvKey, spec.Name)
 	}
-	// Quit the host before mutating. ChatGPT flushes its in-memory config and
-	// thread index while quitting, so writing first would let that flush
-	// overwrite the provider settings and the history retag we are about to
-	// apply. Quitting first (mirroring restoreCodexNative) means the host loads
-	// the freshly retagged threads on launch.
+	// Quit the host before mutating. ChatGPT flushes its in-memory config while
+	// quitting, so writing first would let that flush overwrite the provider
+	// settings. Conversation/session files remain owned by Codex and are never
+	// rewritten during a provider switch.
 	appName := app.ClientAppName()
 	if appName != "" {
 		if err := requireExternalCodexLifecycle(); err != nil {
@@ -146,6 +145,7 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 	}
 	fmt.Println(")")
 	fmt.Println("  Protocol is passed through without translation.")
+	printCodexSessionCompatibilityNotice()
 	if spec.ID == "deepseek" && os.Getenv("AIX_SKIP_CATALOG_REFRESH") == "" {
 		internal.RefreshDeepSeekCatalog()
 	}
@@ -156,7 +156,6 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 			fmt.Printf("  ✓ live catalog synced (%d verified Codex-compatible models)\n", count)
 		}
 	}
-	syncHistoryAfterSwitch(spec.ID)
 	if appName != "" {
 		fmt.Printf("Launching %s... ", appName)
 		if err := launchMacApp(appName); err != nil {
@@ -171,29 +170,15 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 	return nil
 }
 
-// defaultCodexProvider is the provider id Codex records for sessions created
-// in its default (GPT) mode; used when syncing history after `aix codex
-// restore`.
-const defaultCodexProvider = "openai"
-
-// syncHistoryAfterSwitch retags every Codex conversation thread to the given
-// provider after a successful provider switch, so the desktop sidebar keeps
-// showing the full history under the new provider (openai/codex#31625).
-// Best-effort: a failure is reported but never fails the switch.
-func syncHistoryAfterSwitch(provider string) {
-	res, err := internal.SyncCodexHistory(provider)
-	if err != nil {
-		fmt.Printf("  ⚠  history sync skipped: %v\n", err)
-		return
-	}
-	if res.Retagged == 0 {
-		fmt.Printf("  ✓ conversation history already on %q\n", res.Target)
-		return
-	}
-	fmt.Printf("  ✓ conversation history synced to %q (%d threads; backups in %s)\n", res.Target, res.Retagged, res.BackupDir)
-	if !res.DBUpdated && res.DBErr != "" {
-		fmt.Printf("  ⚠  %s (rollouts still synced; restart rebuilds the app index)\n", res.DBErr)
-	}
+// printCodexSessionCompatibilityNotice explains the safe continuation path
+// without implying that AIX rewrites or migrates client-owned session data.
+func printCodexSessionCompatibilityNotice() {
+	fmt.Println()
+	fmt.Println("  Note about existing sessions:")
+	fmt.Println("  Your previous sessions remain readable, but continuing one directly after")
+	fmt.Println("  changing providers may fail because provider histories are not always compatible.")
+	fmt.Println("  If that happens, start a new session and ask it to read the previous session's")
+	fmt.Println("  context so it can continue the work. This limitation may improve in the future.")
 }
 
 // codexProviderOverview renders the bare "aix codex" provider listing: every

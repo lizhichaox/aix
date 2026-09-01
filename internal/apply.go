@@ -326,6 +326,9 @@ func removeDesktop3pDir() error {
 	if err := os.Rename(p3pDir, bakDir); err != nil {
 		return fmt.Errorf("back up Claude-3p data: %w", err)
 	}
+	if _, err := projectDesktop3pSessionsToNative(); err != nil {
+		return fmt.Errorf("project third-party session visibility: %w", err)
+	}
 	return nil
 }
 

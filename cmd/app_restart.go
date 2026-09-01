@@ -73,6 +73,19 @@ func requireExternalCodexLifecycle() error {
 	return fmt.Errorf("cannot switch or restart Codex from inside an active Codex task; run the command from an external terminal")
 }
 
+// requireExternalClaudeLifecycle prevents Claude Code from terminating the
+// Claude Desktop process while a Claude-hosted task is executing this command.
+// CLAUDECODE is the primary Claude Code host marker; the additional markers
+// cover hosts that expose more specific session metadata.
+func requireExternalClaudeLifecycle() error {
+	if os.Getenv("CLAUDECODE") == "" &&
+		os.Getenv("CLAUDE_CODE_SESSION_ID") == "" &&
+		os.Getenv("CLAUDE_CODE_ENTRYPOINT") == "" {
+		return nil
+	}
+	return fmt.Errorf("cannot switch or restart Claude from inside an active Claude task; run the command from an external terminal")
+}
+
 // autoRestartCodex restarts the Codex desktop app after a config change.
 // A restart failure is non-fatal: the config is already applied, so we warn
 // and leave the manual command for the user.
@@ -129,7 +142,6 @@ func restoreCodexNative(app *internal.HarnessInfo) (retErr error) {
 		return fmt.Errorf("save state codex: %w", err)
 	}
 	committed = true
-	syncHistoryAfterSwitch(defaultCodexProvider)
 
 	fmt.Printf("Launching %s... ", appName)
 	if err := launchMacApp(appName); err != nil {
@@ -138,6 +150,7 @@ func restoreCodexNative(app *internal.HarnessInfo) (retErr error) {
 		return nil
 	}
 	fmt.Println("done")
+	printCodexSessionCompatibilityNotice()
 	return nil
 }
 
@@ -155,6 +168,9 @@ func appNotRunning(msg string) bool {
 // is required: Claude Desktop rewrites claude_desktop_config.json from its
 // in-memory state when it quits, stripping AIX's inferenceGateway* fields.
 func restartClaudeDesktopWithConfig() error {
+	if err := requireExternalClaudeLifecycle(); err != nil {
+		return err
+	}
 	fmt.Printf("Quitting Claude... ")
 	if err := quitMacApp("Claude"); err != nil {
 		return err
