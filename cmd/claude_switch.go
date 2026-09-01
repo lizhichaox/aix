@@ -66,7 +66,7 @@ func claudeProviderCompletion(cmd *cobra.Command, args []string, toComplete stri
 	case 1:
 		return claudeProviderModelCompletion(args[0]), cobra.ShellCompDirectiveNoFileComp
 	case 2:
-		return internal.HarnessEfforts(internal.HarnessClaude), cobra.ShellCompDirectiveNoFileComp
+		return internal.HarnessModelEfforts(internal.HarnessClaude, args[0], args[1]), cobra.ShellCompDirectiveNoFileComp
 	default:
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
@@ -177,7 +177,7 @@ func emptyAsNative(value string) string {
 }
 
 // switchClaudeProvider applies one selection to both Claude clients.
-func switchClaudeProvider(provider, model, effort string) error {
+func switchClaudeProvider(provider, model, effort string) (retErr error) {
 	if !validClaudeProvider(provider) {
 		return fmt.Errorf("unknown Claude provider %q (available: %s)", provider, strings.Join(claudeProviderIDs(), ", "))
 	}
@@ -191,6 +191,26 @@ func switchClaudeProvider(provider, model, effort string) error {
 			return err
 		}
 	}
+	tx, err := beginClaudeConfigTransaction(provider)
+	if err != nil {
+		return fmt.Errorf("begin Claude switch transaction: %w", err)
+	}
+	committed := false
+	proxyMayHaveChanged := false
+	defer func() {
+		if committed {
+			return
+		}
+		rollbackErr := tx.Rollback()
+		var reloadErr error
+		if proxyMayHaveChanged {
+			reloadErr = ensureAIXGateway()
+		}
+		if rollbackErr != nil || reloadErr != nil {
+			retErr = fmt.Errorf("%w (rollback: %v; gateway reload: %v)", retErr, rollbackErr, reloadErr)
+		}
+	}()
+	proxyMayHaveChanged = true
 
 	if provider == "deepseek" {
 		model = selection.UpstreamModel
@@ -241,14 +261,18 @@ func switchClaudeProvider(provider, model, effort string) error {
 		}
 	}
 
-	for _, id := range ids {
-		if err := internal.SaveAppState(id, provider); err != nil {
-			return fmt.Errorf("save %s state: %w", id, err)
-		}
-	}
 	if err := ensureAIXGateway(); err != nil {
 		return err
 	}
+	verifyModel := selection.ClientModel
+	verifyEffort := selection.Effort
+	if err := internal.VerifyClaudeProviderApplied(provider, verifyModel, verifyEffort); err != nil {
+		return fmt.Errorf("verify Claude harness configuration: %w", err)
+	}
+	if err := internal.SaveAppStates(map[string]string{"claudecode": provider, "desktop": provider}); err != nil {
+		return fmt.Errorf("save Claude harness state: %w", err)
+	}
+	committed = true
 	logModel := selection.ClientModel
 	logEffort := selection.Effort
 	if logModel == "" {

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -41,6 +42,11 @@ func restartMacApp(appName string) error {
 	if runtime.GOOS != "darwin" {
 		return fmt.Errorf("%s restart is macOS-only", strings.ToLower(appName))
 	}
+	if appName == internal.CodexHostAppName() {
+		if err := requireExternalCodexLifecycle(); err != nil {
+			return err
+		}
+	}
 
 	fmt.Printf("Quitting %s... ", appName)
 	if err := quitMacApp(appName); err != nil {
@@ -55,6 +61,16 @@ func restartMacApp(appName string) error {
 	fmt.Println("done")
 	fmt.Printf("\u2713 %s restarted\n", appName)
 	return nil
+}
+
+// requireExternalCodexLifecycle prevents a Codex task from terminating the
+// desktop process that is currently executing it. Provider changes remain a
+// normal external-terminal workflow; this guard only rejects self-restarts.
+func requireExternalCodexLifecycle() error {
+	if os.Getenv("CODEX_SESSION_ID") == "" && os.Getenv("CODEX_THREAD_ID") == "" {
+		return nil
+	}
+	return fmt.Errorf("cannot switch or restart Codex from inside an active Codex task; run the command from an external terminal")
 }
 
 // autoRestartCodex restarts the Codex desktop app after a config change.
@@ -72,10 +88,13 @@ func autoRestartCodex() {
 // first would let that flush overwrite the native OpenAI settings we just
 // wrote. History must also be synced before launch so the host never indexes
 // third-party model ids under the ChatGPT account.
-func restoreCodexNative(app *internal.HarnessInfo) error {
+func restoreCodexNative(app *internal.HarnessInfo) (retErr error) {
 	appName := app.ClientAppName()
 	if appName == "" {
 		return fmt.Errorf("no desktop client found for %s", app.Name)
+	}
+	if err := requireExternalCodexLifecycle(); err != nil {
+		return err
 	}
 
 	fmt.Printf("Quitting %s... ", appName)
@@ -83,18 +102,40 @@ func restoreCodexNative(app *internal.HarnessInfo) error {
 		return err
 	}
 	fmt.Println("done")
+	tx, err := beginCodexConfigTransaction("")
+	if err != nil {
+		_ = launchMacApp(appName)
+		return err
+	}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		rollbackErr := tx.Rollback()
+		launchErr := launchMacApp(appName)
+		if rollbackErr != nil || launchErr != nil {
+			retErr = fmt.Errorf("%w (rollback: %v; relaunch: %v)", retErr, rollbackErr, launchErr)
+		}
+	}()
 
 	if err := internal.RestoreNative(app); err != nil {
 		return fmt.Errorf("restore %s: %w", app.Name, err)
 	}
+	if err := internal.VerifyCodexNativeRestored(); err != nil {
+		return fmt.Errorf("verify native Codex configuration: %w", err)
+	}
 	if err := internal.SaveAppState("codex", ""); err != nil {
 		return fmt.Errorf("save state codex: %w", err)
 	}
+	committed = true
 	syncHistoryAfterSwitch(defaultCodexProvider)
 
 	fmt.Printf("Launching %s... ", appName)
 	if err := launchMacApp(appName); err != nil {
-		return fmt.Errorf("launch %s: %v", appName, err)
+		fmt.Printf("failed\n  ⚠  Launch failed: %v\n", err)
+		fmt.Printf("     Start %s manually; native Codex configuration remains restored.\n", appName)
+		return nil
 	}
 	fmt.Println("done")
 	return nil
@@ -141,31 +182,6 @@ func autoRestartClaudeDesktop() {
 		fmt.Printf("  ⚠  Auto-restart failed: %v\n", err)
 		fmt.Printf("     Restart Claude manually: aix claude restart\n")
 	}
-}
-
-// restoreClaudeDesktopNative quits Claude before changing its configuration.
-// Claude flushes its in-memory config while quitting, so restoring first would
-// let that flush overwrite the native deployment mode we just wrote.
-func restoreClaudeDesktopNative(app *internal.HarnessInfo) error {
-	fmt.Printf("Quitting Claude... ")
-	if err := quitMacApp("Claude"); err != nil {
-		return err
-	}
-	fmt.Println("done")
-
-	if err := internal.RestoreNative(app); err != nil {
-		return fmt.Errorf("restore %s: %w", app.Name, err)
-	}
-	if err := internal.SaveAppState("desktop", ""); err != nil {
-		return fmt.Errorf("save state desktop: %w", err)
-	}
-
-	fmt.Printf("Launching Claude... ")
-	if err := launchMacApp("Claude"); err != nil {
-		return fmt.Errorf("launch Claude: %v", err)
-	}
-	fmt.Println("done")
-	return nil
 }
 
 // reapplyClaudeDesktopProvider re-writes the current desktop provider template

@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.11.8 (2026-09-01)
+
+- Made Claude provider switches and native restore transactional across Claude
+  Code, Claude Desktop, gateway routing, generated templates, and AIX state,
+  with rollback on partial failure.
+- Replaced whole-block Claude Code environment writes with field-level
+  ownership and a native snapshot, preserving unrelated settings and changes
+  made while an AIX provider is active.
+- Stopped merging, rewriting, and symlinking Claude Desktop session metadata;
+  native and third-party data directories now round-trip as opaque stores.
+- Removed the gateway's silent response truncation and return HTTP 413 for an
+  oversized request instead of forwarding malformed partial JSON.
+- Made Codex model capabilities and model-specific effort completion registry
+  driven, added Claude's documented `auto` effort, and defaulted undeclared
+  custom-model capabilities to a conservative disabled state.
+- Kept unsupported Codex web-search metadata out of generated model catalogs,
+  validate the active catalog before committing a switch, and reject Codex
+  self-restarts launched from an active Codex task.
+- Replaced the gateway's whole-response 30-minute timeout with a five-minute
+  response-header timeout, allowing established SSE streams to run without an
+  AIX deadline while failing stalled upstream connections sooner.
+- Made setup apply an unambiguous sole provider through the normal validated
+  switch paths, reapply an existing selection when several credentials exist,
+  and preserve native mode when several new choices would be ambiguous.
+
 ## v0.11.7 (2026-08-29)
 
 - Claude usage now tries every existing Claude Code OAuth credential before

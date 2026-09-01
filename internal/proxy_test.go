@@ -70,8 +70,17 @@ func TestNewProxyServer_WithProxy(t *testing.T) {
 	cfg.Proxy = "http://127.0.0.1:6152"
 	ps := NewProxyServer(cfg)
 
-	if ps.client.Transport == nil {
-		t.Fatal("expected Transport to be set when proxy is configured")
+	transport, ok := ps.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport = %T, want *http.Transport", ps.client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != upstreamResponseHeaderTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, upstreamResponseHeaderTimeout)
+	}
+	request, _ := http.NewRequest("GET", "https://example.com", nil)
+	proxyURL, err := transport.Proxy(request)
+	if err != nil || proxyURL == nil || proxyURL.String() != cfg.Proxy {
+		t.Fatalf("proxy = (%v, %v), want %q", proxyURL, err, cfg.Proxy)
 	}
 }
 
@@ -80,8 +89,12 @@ func TestNewProxyServer_WithoutProxy(t *testing.T) {
 	cfg.Proxy = ""
 	ps := NewProxyServer(cfg)
 
-	if ps.client.Transport != nil {
-		t.Fatal("expected Transport to be nil when proxy is not configured")
+	transport, ok := ps.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport = %T, want *http.Transport", ps.client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != upstreamResponseHeaderTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, upstreamResponseHeaderTimeout)
 	}
 }
 
@@ -93,8 +106,12 @@ func TestNewProxyServer_InvalidProxy(t *testing.T) {
 	if ps == nil {
 		t.Fatal("server should be created even with invalid proxy URL")
 	}
-	if ps.client.Transport != nil {
-		t.Fatal("expected Transport to be nil for invalid proxy URL")
+	transport, ok := ps.client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("Transport = %T, want *http.Transport", ps.client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != upstreamResponseHeaderTimeout {
+		t.Fatalf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, upstreamResponseHeaderTimeout)
 	}
 }
 

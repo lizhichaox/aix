@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "0.11.7"
+var Version = "0.11.8"
 
 var rootCmd = &cobra.Command{
 	Use:   "aix",
@@ -45,7 +45,8 @@ func init() {
 	rootCmd.SetVersionTemplate(`AIX v{{.Version}}
 
 Switch AI providers, models, and reasoning effort across AI harnesses while
-keeping your conversations ready to continue across every switch.
+preserving client-owned conversation data. Session visibility follows the
+storage mode supported by each harness.
 
 Common commands:
   aix setup

@@ -23,20 +23,24 @@ const (
 var (
 	codexEffortTokens = []string{"minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
 	codexEfforts      = []string{"low", "high", "max"}
-	claudeEfforts     = []string{"low", "medium", "high", "xhigh", "max"}
+	claudeEfforts     = []string{"low", "medium", "high", "xhigh", "max", "auto"}
 )
 
 // HarnessModelSpec describes one model as exposed to a particular harness.
 // ClientModel is written to the harness configuration; UpstreamModel is what
 // the provider receives after any harness-specific alias rewrite.
 type HarnessModelSpec struct {
-	ID               string   `toml:"-"`
-	ClientModel      string   `toml:"client_model"`
-	UpstreamModel    string   `toml:"upstream_model"`
-	DisplayName      string   `toml:"display_name"`
-	ContextWindow    int      `toml:"context_window,omitempty"`
-	DefaultEffort    string   `toml:"default_effort"`
-	SupportedEfforts []string `toml:"supported_efforts"`
+	ID                        string   `toml:"-"`
+	ClientModel               string   `toml:"client_model"`
+	UpstreamModel             string   `toml:"upstream_model"`
+	DisplayName               string   `toml:"display_name"`
+	ContextWindow             int      `toml:"context_window,omitempty"`
+	DefaultEffort             string   `toml:"default_effort"`
+	SupportedEfforts          []string `toml:"supported_efforts"`
+	InputModalities           []string `toml:"input_modalities,omitempty"`
+	SupportsParallelToolCalls bool     `toml:"supports_parallel_tool_calls,omitempty"`
+	SupportsWebSearch         bool     `toml:"supports_web_search,omitempty"`
+	MultiAgentVersion         string   `toml:"multi_agent_version,omitempty"`
 }
 
 // HarnessProviderSpec is the provider configuration visible to one harness.
@@ -76,13 +80,14 @@ type HarnessFileConfig struct {
 // HarnessSelection is the fully resolved command input consumed by a harness
 // adapter. Model and effort defaults have already been applied and validated.
 type HarnessSelection struct {
-	HarnessID     string
-	ProviderID    string
-	Model         string
-	ClientModel   string
-	UpstreamModel string
-	ContextWindow int
-	Effort        string
+	HarnessID        string
+	ProviderID       string
+	Model            string
+	ClientModel      string
+	UpstreamModel    string
+	ContextWindow    int
+	Effort           string
+	SupportedEfforts []string
 }
 
 // HarnessProvider returns the effective built-in mapping for one
@@ -97,13 +102,17 @@ func bundledHarnessProvider(harnessID, providerID string) (HarnessProviderSpec, 
 		models := make(map[string]HarnessModelSpec, len(native.Models))
 		for _, m := range native.Models {
 			models[m.Slug] = HarnessModelSpec{
-				ID:               m.Slug,
-				ClientModel:      m.Slug,
-				UpstreamModel:    m.Slug,
-				DisplayName:      m.DisplayName,
-				ContextWindow:    m.ContextWindow,
-				DefaultEffort:    DefaultHarnessEffort,
-				SupportedEfforts: append([]string(nil), codexEfforts...),
+				ID:                        m.Slug,
+				ClientModel:               m.Slug,
+				UpstreamModel:             m.Slug,
+				DisplayName:               m.DisplayName,
+				ContextWindow:             m.ContextWindow,
+				DefaultEffort:             DefaultHarnessEffort,
+				SupportedEfforts:          append([]string(nil), codexEfforts...),
+				InputModalities:           append([]string(nil), m.InputModalities...),
+				SupportsParallelToolCalls: native.SupportsParallelToolCalls,
+				SupportsWebSearch:         native.SupportsWebSearch,
+				MultiAgentVersion:         native.MultiAgentVersion,
 			}
 		}
 		return HarnessProviderSpec{
@@ -617,14 +626,26 @@ func ResolveHarnessSelection(harnessID, providerID, model, effort string) (Harne
 		return HarnessSelection{}, fmt.Errorf("unsupported effort %q for %s/%s model %q (use %s)", effort, harnessID, providerID, resolved.ID, strings.Join(resolved.SupportedEfforts, ", "))
 	}
 	return HarnessSelection{
-		HarnessID:     harnessID,
-		ProviderID:    providerID,
-		Model:         resolved.ID,
-		ClientModel:   resolved.ClientModel,
-		UpstreamModel: resolved.UpstreamModel,
-		ContextWindow: resolved.ContextWindow,
-		Effort:        effort,
+		HarnessID:        harnessID,
+		ProviderID:       providerID,
+		Model:            resolved.ID,
+		ClientModel:      resolved.ClientModel,
+		UpstreamModel:    resolved.UpstreamModel,
+		ContextWindow:    resolved.ContextWindow,
+		Effort:           effort,
+		SupportedEfforts: append([]string(nil), resolved.SupportedEfforts...),
 	}, nil
+}
+
+// HarnessModelEfforts returns the effective effort choices for a concrete
+// provider/model selection. Completion and UI callers should prefer this over
+// the broad parser token set exposed by HarnessEfforts.
+func HarnessModelEfforts(harnessID, providerID, model string) []string {
+	selection, err := ResolveHarnessSelection(harnessID, providerID, model, "")
+	if err != nil {
+		return nil
+	}
+	return append([]string(nil), selection.SupportedEfforts...)
 }
 
 func containsString(values []string, target string) bool {

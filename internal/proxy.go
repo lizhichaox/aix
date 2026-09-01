@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -22,7 +23,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-const maxProxyResponseBytes = 100 * 1024 * 1024
+const (
+	maxProxyRequestBytes          = 50 * 1024 * 1024
+	upstreamResponseHeaderTimeout = 5 * time.Minute
+)
 
 // DefaultGatewayAPIKey is the local credential shared by AIX-managed clients
 // and the AIX proxy. It is not an upstream provider credential.
@@ -164,22 +168,25 @@ type ProxyServer struct {
 func NewProxyServer(cfg *ProxyConfig) *ProxyServer {
 	ps := &ProxyServer{
 		config:    cfg,
-		client:    &http.Client{Timeout: 30 * time.Minute},
+		client:    &http.Client{},
 		startTime: time.Now(),
 	}
 
-	if cfg.Proxy != "" {
-		proxyURL, err := url.Parse(cfg.Proxy)
-		if err != nil {
-			log.Printf("[aix-proxy] WARNING: invalid proxy URL %q: %v", cfg.Proxy, err)
-		} else if t, ok := http.DefaultTransport.(*http.Transport); ok {
-			transport := t.Clone()
-			transport.Proxy = http.ProxyURL(proxyURL)
-			ps.client.Transport = transport
-			log.Printf("[aix-proxy] upstream connections routed through proxy: %s", proxyURL.String())
-		} else {
-			log.Printf("[aix-proxy] WARNING: DefaultTransport is not *http.Transport, proxy setting ignored")
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport := t.Clone()
+		transport.ResponseHeaderTimeout = upstreamResponseHeaderTimeout
+		if cfg.Proxy != "" {
+			proxyURL, err := url.Parse(cfg.Proxy)
+			if err != nil {
+				log.Printf("[aix-proxy] WARNING: invalid proxy URL %q: %v", cfg.Proxy, err)
+			} else {
+				transport.Proxy = http.ProxyURL(proxyURL)
+				log.Printf("[aix-proxy] upstream connections routed through proxy: %s", proxyURL.String())
+			}
 		}
+		ps.client.Transport = transport
+	} else {
+		log.Printf("[aix-proxy] WARNING: DefaultTransport is not *http.Transport; response-header timeout and proxy settings are unavailable")
 	}
 
 	mux := http.NewServeMux()
@@ -407,10 +414,15 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Read body once — used for model-based routing and downstream forwarding.
-	bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 50*1024*1024))
+	bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxProxyRequestBytes))
 	r.Body.Close()
 	if err != nil {
 		log.Printf("[%s] [aix-proxy] ERROR: read request body: %v", harness, err)
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			http.Error(w, `{"error":"request body too large"}`, http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
 		return
 	}
@@ -506,35 +518,28 @@ func (ps *ProxyServer) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			log.Printf("[%s] [aix-proxy] WARNING: streaming without http.Flusher for %s %s", harness, r.Method, r.URL.Path)
 		}
-		var total int64
 		buf := make([]byte, 4096)
 		for {
 			n, err := resp.Body.Read(buf)
 			if n > 0 {
 				if _, werr := w.Write(buf[:n]); werr != nil {
-					log.Printf("[%s] [aix-proxy] ERROR: streaming write failed after %d bytes: %v", harness, total, werr)
+					log.Printf("[%s] [aix-proxy] ERROR: streaming write failed: %v", harness, werr)
 					break
 				}
-				total += int64(n)
 				if ok {
 					flusher.Flush()
 				}
 			}
-			if total >= maxProxyResponseBytes {
-				log.Printf("[%s] [aix-proxy] WARNING: streaming response truncated at %d bytes (limit reached)", harness, maxProxyResponseBytes)
-				break
-			}
 			if err != nil {
+				if err != io.EOF {
+					log.Printf("[%s] [aix-proxy] ERROR: streaming read failed: %v", harness, err)
+				}
 				break
 			}
 		}
 	} else {
-		respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxProxyResponseBytes))
-		if err != nil {
-			log.Printf("[%s] [aix-proxy] read upstream body error: %v", harness, err)
-		}
-		if _, werr := w.Write(respBody); werr != nil {
-			log.Printf("[%s] [aix-proxy] write response error: %v", harness, werr)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			log.Printf("[%s] [aix-proxy] copy upstream response error: %v", harness, err)
 		}
 	}
 }

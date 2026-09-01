@@ -1,6 +1,7 @@
 package internal
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"time"
@@ -27,22 +28,30 @@ func LoadState() (*State, error) {
 }
 
 func SaveAppState(appID, provider string) error {
+	return SaveAppStates(map[string]string{appID: provider})
+}
+
+// SaveAppStates updates one or more internal app targets in a single atomic
+// write. Public multi-client harnesses such as Claude use this to ensure state
+// never records only half of a successful selection.
+func SaveAppStates(updates map[string]string) error {
 	state, err := LoadState()
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
-	if provider == "" {
-		state.Apps[appID] = "-"
-	} else {
-		state.Apps[appID] = provider
+	for appID, provider := range updates {
+		if provider == "" {
+			state.Apps[appID] = "-"
+		} else {
+			state.Apps[appID] = provider
+		}
 	}
 	state.UpdatedAt = time.Now().Format(time.RFC3339)
-	f, err := os.Create(StatePath())
-	if err != nil {
+	var out bytes.Buffer
+	if err := toml.NewEncoder(&out).Encode(state); err != nil {
 		return err
 	}
-	defer f.Close()
-	return toml.NewEncoder(f).Encode(state)
+	return writePrivateFile(StatePath(), out.Bytes())
 }
 
 func EnsureDirs() error {

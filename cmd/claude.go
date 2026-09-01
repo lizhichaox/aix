@@ -30,24 +30,58 @@ var claudeRestoreCmd = &cobra.Command{
 	RunE:  runClaudeRestore,
 }
 
-func runClaudeRestore(cmd *cobra.Command, args []string) error {
+func runClaudeRestore(cmd *cobra.Command, args []string) (retErr error) {
 	code, err := internal.ResolveHarness("claudecode")
 	if err != nil {
 		return err
-	}
-	if err := internal.RestoreNative(code); err != nil {
-		return fmt.Errorf("restore %s: %w", code.Name, err)
-	}
-	if err := internal.SaveAppState("claudecode", ""); err != nil {
-		return fmt.Errorf("save Claude Code state: %w", err)
 	}
 	desktop, err := internal.ResolveHarness("desktop")
 	if err != nil {
 		return err
 	}
-	if err := restoreClaudeDesktopNative(desktop); err != nil {
+	// Claude Desktop flushes its in-memory configuration on quit. Capture the
+	// transaction only after that flush so rollback restores the real pre-command
+	// state rather than a stale on-disk copy.
+	fmt.Printf("Quitting Claude... ")
+	if err := quitMacApp("Claude"); err != nil {
 		return err
 	}
+	fmt.Println("done")
+	tx, err := beginClaudeConfigTransaction("")
+	if err != nil {
+		_ = launchMacApp("Claude")
+		return fmt.Errorf("begin Claude restore transaction: %w", err)
+	}
+	committed := false
+	relaunched := false
+	defer func() {
+		if committed {
+			return
+		}
+		rollbackErr := tx.Rollback()
+		var launchErr error
+		if !relaunched {
+			launchErr = launchMacApp("Claude")
+		}
+		if rollbackErr != nil || launchErr != nil {
+			retErr = fmt.Errorf("%w (rollback: %v; relaunch: %v)", retErr, rollbackErr, launchErr)
+		}
+	}()
+	if err := internal.RestoreNative(code); err != nil {
+		return fmt.Errorf("restore %s: %w", code.Name, err)
+	}
+	if err := internal.RestoreNative(desktop); err != nil {
+		return fmt.Errorf("restore %s: %w", desktop.Name, err)
+	}
+	if err := internal.SaveAppStates(map[string]string{"claudecode": "", "desktop": ""}); err != nil {
+		return fmt.Errorf("save Claude harness state: %w", err)
+	}
+	if err := launchMacApp("Claude"); err != nil {
+		return fmt.Errorf("launch Claude: %w", err)
+	}
+	relaunched = true
+	committed = true
+	fmt.Println("Launching Claude... done")
 	fmt.Println("✓ Claude Code + Claude Desktop restored to their native APIs")
 	return nil
 }

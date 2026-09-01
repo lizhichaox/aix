@@ -58,7 +58,7 @@ func runCodexProvider(cmd *cobra.Command, args []string) error {
 // switchCodexProvider applies a managed Codex provider switch. An empty model
 // resolves to the provider's default; DeepSeek's catalog metadata is then
 // best-effort refreshed from the official setup script.
-func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string) error {
+func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string) (retErr error) {
 	app, err := internal.ResolveHarness("codex")
 	if err != nil {
 		return err
@@ -84,24 +84,59 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 	// the freshly retagged threads on launch.
 	appName := app.ClientAppName()
 	if appName != "" {
+		if err := requireExternalCodexLifecycle(); err != nil {
+			return err
+		}
 		fmt.Printf("Quitting %s... ", appName)
 		if err := quitMacApp(appName); err != nil {
 			return err
 		}
 		fmt.Println("done")
 	}
+	tx, err := beginCodexConfigTransaction(spec.ID)
+	if err != nil {
+		if appName != "" {
+			_ = launchMacApp(appName)
+		}
+		return err
+	}
+	committed := false
+	relaunched := false
+	proxyMayHaveChanged := false
+	defer func() {
+		if committed {
+			return
+		}
+		rollbackErr := tx.Rollback()
+		var reloadErr error
+		if proxyMayHaveChanged {
+			reloadErr = ensureAIXGateway()
+		}
+		var launchErr error
+		if appName != "" && !relaunched {
+			launchErr = launchMacApp(appName)
+		}
+		if rollbackErr != nil || reloadErr != nil || launchErr != nil {
+			retErr = fmt.Errorf("%w (rollback: %v; gateway reload: %v; relaunch: %v)", retErr, rollbackErr, reloadErr, launchErr)
+		}
+	}()
 	// Apply the resolved model, not the raw argument. An empty model resolves to
 	// the provider's current default; passing the raw value would let a stale
 	// provider template (e.g. one carrying the previous default) leak through.
+	proxyMayHaveChanged = true
 	if err := internal.ApplyProviderWithSelection(app, spec.ID, selection.ClientModel, selection.Effort); err != nil {
 		return err
-	}
-	if err := internal.SaveAppState("codex", spec.ID); err != nil {
-		return fmt.Errorf("save state: %w", err)
 	}
 	if err := ensureAIXGateway(); err != nil {
 		return err
 	}
+	if err := internal.VerifyCodexProviderApplied(spec.ID, selection.ClientModel, selection.Effort); err != nil {
+		return fmt.Errorf("verify Codex configuration: %w", err)
+	}
+	if err := internal.SaveAppState("codex", spec.ID); err != nil {
+		return fmt.Errorf("save state: %w", err)
+	}
+	committed = true
 	if err := internal.AppendSwitchLog(internal.HarnessCodex, spec.ID, selection.ClientModel, selection.Effort); err != nil {
 		fmt.Printf("  ⚠ switch log not written: %v\n", err)
 	}
@@ -125,8 +160,11 @@ func switchCodexProvider(spec internal.NativeProviderSpec, model, effort string)
 	if appName != "" {
 		fmt.Printf("Launching %s... ", appName)
 		if err := launchMacApp(appName); err != nil {
-			return fmt.Errorf("launch %s: %v", appName, err)
+			fmt.Printf("failed\n  ⚠  Launch failed: %v\n", err)
+			fmt.Printf("     Start %s manually; the verified provider configuration remains active.\n", appName)
+			return nil
 		}
+		relaunched = true
 		fmt.Println("done")
 		fmt.Printf("✓ %s restarted\n", appName)
 	}
@@ -200,7 +238,7 @@ func codexProviderCompletion(cmd *cobra.Command, args []string, toComplete strin
 		}
 	}
 	if len(args) >= 2 {
-		return internal.HarnessEfforts(internal.HarnessCodex), cobra.ShellCompDirectiveNoFileComp
+		return internal.HarnessModelEfforts(internal.HarnessCodex, args[0], args[1]), cobra.ShellCompDirectiveNoFileComp
 	}
 	return nil, cobra.ShellCompDirectiveNoFileComp
 }
