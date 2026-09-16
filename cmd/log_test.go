@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,13 @@ func TestFormatLogRoute(t *testing.T) {
 	want := "Current route: harness=claude → provider=opencode-go → model=deepseek-v4-flash-vision-exp → effort=high"
 	if got := formatLogRoute(status); got != want {
 		t.Fatalf("formatLogRoute() = %q, want %q", got, want)
+	}
+}
+
+func TestLogFilterTreatsProviderAsLiteralText(t *testing.T) {
+	want := []string{"--color=never", "-F", "custom[provider]+"}
+	if got := logFilterArgs("custom[provider]+"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("logFilterArgs() = %v, want %v", got, want)
 	}
 }
 

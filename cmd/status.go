@@ -34,9 +34,12 @@ var statusCmd = &cobra.Command{
 	Short: "Show harness status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		jsonOut, _ := cmd.Flags().GetBool("json")
-		state, _ := internal.LoadState()
+		state, stateErr := internal.LoadState()
 
 		var data statusData
+		if stateErr != nil {
+			data.Issue = fmt.Sprintf("cannot read AIX state: %v", stateErr)
+		}
 
 		if state.UpdatedAt != "" {
 			data.LastSwitch = state.UpdatedAt
@@ -45,7 +48,7 @@ var statusCmd = &cobra.Command{
 		data.Harnesses = buildHarnessStatuses(state)
 		if anyManaged(data.Harnesses) {
 			if !internal.IsGatewayReady() {
-				data.Issue = "AIX gateway is not running; switch the managed provider again to recover"
+				data.Issue = appendStatusIssue(data.Issue, "AIX gateway is not running; switch the managed provider again to recover")
 			}
 		}
 
@@ -94,6 +97,13 @@ var statusCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func appendStatusIssue(existing, issue string) string {
+	if existing == "" {
+		return issue
+	}
+	return existing + "; " + issue
 }
 
 func anyManaged(harnesses []harnessStatus) bool {

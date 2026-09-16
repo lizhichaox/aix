@@ -97,3 +97,10 @@ func TestAnyManagedIncludesCodexGateway(t *testing.T) {
 		t.Error("native Codex must not require gateway health")
 	}
 }
+
+func TestAppendStatusIssuePreservesBothProblems(t *testing.T) {
+	got := appendStatusIssue("state is unreadable", "gateway is down")
+	if want := "state is unreadable; gateway is down"; got != want {
+		t.Fatalf("appendStatusIssue() = %q, want %q", got, want)
+	}
+}

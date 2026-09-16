@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -24,7 +25,10 @@ var logCmd = &cobra.Command{
 			return fmt.Errorf("AIX gateway log not found at %s\n  Switch a managed provider to start it", logPath)
 		}
 
-		state, _ := internal.LoadState()
+		state, err := internal.LoadState()
+		if err != nil {
+			return fmt.Errorf("read AIX state: %w", err)
+		}
 		fmt.Fprintln(os.Stdout, formatLogRoutes(buildHarnessStatuses(state)))
 		fmt.Fprintf(os.Stdout, "Gateway log: %s\n\n", logPath)
 
@@ -37,27 +41,40 @@ var logCmd = &cobra.Command{
 		}
 		tailArgs = append(tailArgs, logPath)
 
-		tailCmd := exec.Command("tail", tailArgs...)
+		tailCmd := exec.CommandContext(cmd.Context(), "tail", tailArgs...)
 		tailCmd.Stderr = os.Stderr
 
-		var patterns []string
 		if provider != "" {
-			patterns = append(patterns, provider)
-		}
-
-		if len(patterns) > 0 {
-			grepCmd := exec.Command("grep", "--color=never", "-E", strings.Join(patterns, "|"))
-			grepCmd.Stdin, _ = tailCmd.StdoutPipe()
+			grepCmd := exec.CommandContext(cmd.Context(), "grep", logFilterArgs(provider)...)
+			pipe, err := tailCmd.StdoutPipe()
+			if err != nil {
+				return fmt.Errorf("connect log filter: %w", err)
+			}
+			grepCmd.Stdin = pipe
 			grepCmd.Stdout = os.Stdout
 			grepCmd.Stderr = os.Stderr
-			tailCmd.Start()
-			defer tailCmd.Wait()
-			return grepCmd.Run()
+			if err := tailCmd.Start(); err != nil {
+				return fmt.Errorf("start log reader: %w", err)
+			}
+			filterErr := grepCmd.Run()
+			tailErr := tailCmd.Wait()
+			var exitErr *exec.ExitError
+			if filterErr != nil && !(noFollow && errors.As(filterErr, &exitErr) && exitErr.ExitCode() == 1) {
+				return fmt.Errorf("filter gateway log: %w", filterErr)
+			}
+			if tailErr != nil {
+				return fmt.Errorf("read gateway log: %w", tailErr)
+			}
+			return nil
 		}
 
 		tailCmd.Stdout = os.Stdout
 		return tailCmd.Run()
 	},
+}
+
+func logFilterArgs(provider string) []string {
+	return []string{"--color=never", "-F", provider}
 }
 
 func formatLogRoute(status harnessStatus) string {

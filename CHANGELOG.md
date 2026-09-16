@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.11.10 (2026-09-16)
+
+- Added `aix usage --strict` so aggregate queries can fail when any provider
+  query fails, with combined per-provider errors in text and JSON output.
+- Surfaced unreadable AIX state as a `Warning` in usage items and as a
+  preserved `Issue` in status output instead of silently ignoring it.
+- Made `aix log` provider filtering literal with context-aware `tail`/`grep`
+  execution and correct handling of empty grep matches.
+- Rejected future-dated usage cache records so clock skew cannot serve stale
+  provider-reported snapshots as fresh.
+- Documented the supported Codex/Claude adaptation model, the shared
+  `--editor` mapping flag, and the new usage `--strict` mode.
+
 ## v0.11.9 (2026-09-01)
 
 - Stopped retagging Codex rollout files and the Codex thread database during

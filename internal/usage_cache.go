@@ -72,5 +72,6 @@ func UsageCacheRecordFresh(rec *UsageCacheRecord, ttl time.Duration, now time.Ti
 	if rec == nil || ttl <= 0 || rec.QueriedAt.IsZero() {
 		return false
 	}
-	return now.Sub(rec.QueriedAt) < ttl
+	age := now.Sub(rec.QueriedAt)
+	return age >= 0 && age < ttl
 }
