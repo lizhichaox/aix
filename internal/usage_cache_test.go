@@ -56,11 +56,15 @@ func TestUsageCacheRecordFresh(t *testing.T) {
 	now := time.Now()
 	fresh := &UsageCacheRecord{QueriedAt: now.Add(-30 * time.Second)}
 	stale := &UsageCacheRecord{QueriedAt: now.Add(-90 * time.Second)}
+	future := &UsageCacheRecord{QueriedAt: now.Add(30 * time.Second)}
 	if !UsageCacheRecordFresh(fresh, 60*time.Second, now) {
 		t.Error("fresh record should be fresh")
 	}
 	if UsageCacheRecordFresh(stale, 60*time.Second, now) {
 		t.Error("stale record should not be fresh")
+	}
+	if UsageCacheRecordFresh(future, 60*time.Second, now) {
+		t.Error("future-dated record should not be fresh")
 	}
 	if UsageCacheRecordFresh(fresh, 0, now) {
 		t.Error("zero ttl should disable cache")

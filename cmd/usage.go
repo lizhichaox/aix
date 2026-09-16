@@ -26,6 +26,7 @@ type usageItem struct {
 	Balances        []internal.UsageBalance `json:"balances,omitempty"`
 	Windows         []internal.UsageWindow  `json:"windows,omitempty"`
 	Error           string                  `json:"error,omitempty"`
+	Warning         string                  `json:"warning,omitempty"`
 	Cached          bool                    `json:"cached,omitempty"`
 	QueriedAt       *time.Time              `json:"queried_at,omitempty"`
 }
@@ -40,6 +41,7 @@ var usageCmd = &cobra.Command{
 
 func init() {
 	usageCmd.Flags().Bool("json", false, "output JSON")
+	usageCmd.Flags().Bool("strict", false, "return a non-zero exit status if any provider query fails")
 	usageCmd.Flags().Duration("ttl", internal.DefaultUsageCacheTTL, "cache freshness window; 0 disables caching")
 	rootCmd.AddCommand(usageCmd)
 }
@@ -92,10 +94,14 @@ func runUsage(cmd *cobra.Command, args []string) error {
 		_ = internal.SaveUsageCache(merged)
 	}
 	jsonOut, _ := cmd.Flags().GetBool("json")
+	strict, _ := cmd.Flags().GetBool("strict")
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		return enc.Encode(usageReport{Items: items})
+		if err := enc.Encode(usageReport{Items: items}); err != nil {
+			return err
+		}
+		return usageFailure(items, len(args) == 1 || strict)
 	}
 	for i, item := range items {
 		if i > 0 {
@@ -103,10 +109,23 @@ func runUsage(cmd *cobra.Command, args []string) error {
 		}
 		printUsageItem(item)
 	}
-	if len(args) == 1 && items[0].Error != "" {
-		return fmt.Errorf("%s", items[0].Error)
+	return usageFailure(items, len(args) == 1 || strict)
+}
+
+func usageFailure(items []usageItem, fail bool) error {
+	if !fail {
+		return nil
 	}
-	return nil
+	failed := make([]string, 0)
+	for _, item := range items {
+		if item.Error != "" {
+			failed = append(failed, item.Provider+": "+item.Error)
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return fmt.Errorf("usage query failed: %s", strings.Join(failed, "; "))
 }
 
 func queryUsageItem(ctx context.Context, target string) (usageItem, *internal.UsageCacheRecord) {
@@ -147,17 +166,25 @@ func usageItemFromUsage(provider, kind, plan string, available *bool, balances [
 		Windows:   windows,
 	}
 	if provider == internal.HarnessCodex || provider == internal.HarnessClaude {
-		item.CurrentProvider = currentProviderFor(provider)
+		current, err := currentProviderFor(provider)
+		if err != nil {
+			item.Warning = fmt.Sprintf("cannot read AIX state: %v", err)
+		} else {
+			item.CurrentProvider = current
+		}
 	}
 	return item
 }
 
-func currentProviderFor(target string) string {
-	state, _ := internal.LoadState()
-	if target == internal.HarnessCodex {
-		return buildCodexStatus(state).Provider
+func currentProviderFor(target string) (string, error) {
+	state, err := internal.LoadState()
+	if err != nil {
+		return "", err
 	}
-	return buildClaudeStatus(state).Provider
+	if target == internal.HarnessCodex {
+		return buildCodexStatus(state).Provider, nil
+	}
+	return buildClaudeStatus(state).Provider, nil
 }
 
 func printUsageItem(item usageItem) {
@@ -175,6 +202,9 @@ func printUsageItem(item usageItem) {
 	if item.Error != "" {
 		fmt.Printf("  Error: %s\n", item.Error)
 		return
+	}
+	if item.Warning != "" {
+		fmt.Printf("  Warning: %s\n", item.Warning)
 	}
 	if len(item.Balances) > 0 {
 		for _, balance := range item.Balances {

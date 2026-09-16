@@ -19,6 +19,75 @@ credentials or an AIX-computed usage total. AIX treats Codex session files and
 the Codex thread database as client-owned data and never retags or rewrites
 them during provider changes.
 
+## Supported products and adaptation model
+
+AIX currently exposes two public harnesses: `codex` and `claude`. These names
+describe the client configuration and API protocol that AIX manages; they do
+not mean that every product sharing the same account or brand is modified.
+
+### ChatGPT, Codex, and Codex CLI
+
+An eligible ChatGPT account and subscription can provide native Codex access.
+AIX can read the provider-reported ChatGPT/Codex subscription allowance with
+`aix usage codex`, but it does not modify the ChatGPT website, ChatGPT desktop
+app, chats, projects, or account settings.
+
+Codex Desktop and Codex CLI are treated as one `codex` harness because they use
+the same Codex configuration under `~/.codex/`. A managed switch such as
+`aix codex opencode-go` performs the following work:
+
+1. Resolves the provider, model, reasoning effort, and declared capabilities
+   from the Codex harness registry.
+2. Writes the active provider to `~/.codex/config.toml` and generates the
+   corresponding desktop model catalog in `~/.codex/models.json`.
+3. Creates an isolated `codex-<provider>` route through the private AIX gateway.
+   Requests remain OpenAI Responses requests from client to upstream; AIX does
+   not convert them to Chat Completions or Anthropic Messages.
+4. Starts or reloads the gateway and, when applicable, restarts the Codex host
+   app so the new provider and model catalog are visible.
+
+`aix codex restore` restores the saved OpenAI-native Codex configuration and
+returns the client to its direct native connection. Provider switches and
+restore do not rewrite Codex rollout files, history metadata, or the Codex
+thread database. Each session retains the provider that created it; when two
+providers have incompatible response histories, start a new session and let it
+read the previous session for context rather than retagging the old session.
+
+### Claude and Claude Code
+
+The public `claude` harness covers Claude Code and Claude Desktop together. AIX
+does not expose them as separate switch targets: every provider switch and
+restore applies to both clients as one transaction.
+
+A managed switch such as `aix claude opencode-go` performs the following work:
+
+1. Resolves an Anthropic-compatible provider, model aliases, and reasoning
+   effort from the Claude harness registry.
+2. Updates only the AIX-owned fields in Claude Code's `~/.claude/settings.json`,
+   including its Anthropic base URL, local gateway credential, model aliases,
+   and effort. Unrelated user settings and environment variables are preserved.
+3. On macOS, applies the corresponding third-party provider entry to Claude
+   Desktop's configuration library and activates its `3p` deployment mode.
+4. Starts or reloads the gateway, then restarts Claude Desktop in quit →
+   re-apply configuration → launch order because Claude Desktop may rewrite its
+   configuration while quitting.
+
+Claude traffic remains Anthropic Messages traffic end to end; AIX does not
+translate it into Responses or Chat Completions. If either client update fails,
+the Claude Code settings, Claude Desktop configuration, gateway routing,
+generated templates, and AIX state are rolled back together.
+
+`aix claude restore` restores Claude Code and Claude Desktop to their native
+Anthropic configuration. Claude Desktop's native and third-party data stores
+remain separate and opaque. Restore may copy only missing session index entries
+into the active native identity for visibility; it never overwrites an existing
+entry, merges transcript contents, or promises cross-provider continuation.
+
+In short, the two harnesses share the same command shape but not the same
+adapter: Codex is registry-driven Responses configuration for Codex Desktop and
+CLI, while Claude is an atomic Anthropic-compatible configuration spanning
+Claude Code and, on macOS, Claude Desktop.
+
 The default model and effort come from harness-specific registry files, one
 per harness, at `~/.aix/harnesses-codex.toml` and
 `~/.aix/harnesses-claude.toml`. AIX ships with
@@ -97,6 +166,7 @@ Both harnesses support the same mapping flags:
 ```text
 --list              Show the provider's model mapping
 --edit              Edit harness/provider/model/effort mappings
+--editor <command>  Choose the editor launched by --edit
 --doctor            Validate the effective mapping
 --effort <effort>   Use the default model with an explicit effort
 ```
@@ -130,6 +200,9 @@ aix usage openrouter
 
 # Cache results for 60s by default; query live each time with:
 aix usage --ttl 0
+
+# Make an aggregate query fail if any provider query fails:
+aix usage --strict
 ```
 
 Claude usage reuses any valid Claude Code OAuth credential. If Claude Desktop
