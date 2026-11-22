@@ -18,8 +18,7 @@ private to public.
 
 - [x] Review every tracked file and the complete Git history for private data.
 - [x] Run Gitleaks against all refs; no leaked credentials were detected.
-- [x] Confirm that author identities belong to the maintainer; `.mailmap`
-  canonicalizes the alternate account as `lizhichao <x@lizhichao.com>`.
+- [x] Confirm that author identities belong to the maintainer.
 - [x] Confirm that no private branches, tags, releases, issues, Actions logs,
   or repository secrets contain material that should not become public.
 - [x] Verify that the version in `cmd/root.go` matches the top changelog entry.
